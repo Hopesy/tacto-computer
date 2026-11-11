@@ -1,0 +1,71 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax and CLI tests
+        run: |
+          npm run check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$parseErrors) | Out-Null
+            if ($parseErrors) { throw $parseErrors }
+          }
+          python .Tacto-temp/tests/test-cli.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python .Tacto-temp/tests/test-probe.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Isolated Windows lifecycle and exports
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .Tacto-temp/tests/test-cli-forwarding.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File .Tacto-temp/tests/test-lifecycle.ps1 -TestMode Local
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File .Tacto-temp/tests/test-lifecycle.ps1 -TestMode Remote
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File .Tacto-temp/tests/test-exports.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Validate distributable packages
+        run: |
+          npm pack --pack-destination .Tacto-temp
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python .Tacto-temp/tests/verify-package.py .Tacto-temp/tacto-mcp-0.1.0.tgz
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./Package.ps1
+          python .Tacto-temp/tests/verify-package.py .Tacto-temp/packages/Tacto-0.1.0.zip
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: CLI, MCP protocol and isolated VPS setup
+        run: |
+          npm run check
+          python .Tacto-temp/tests/test-cli.py
+          python .Tacto-temp/tests/test-probe.py
+          python .Tacto-temp/tests/test-vps.py

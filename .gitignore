@@ -1,0 +1,15 @@
+.Tacto-temp/*
+!.Tacto-temp/tests/
+node_modules/
+__pycache__/
+*.pyc
+*.tgz
+*.zip
+*.sha256
+.npmrc
+.env
+desktop.json
+mcp-local.json
+mcp-vps.json
+keys/
+vendor/

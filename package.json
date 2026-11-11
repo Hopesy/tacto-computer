@@ -1,0 +1,52 @@
+{
+  "name": "tacto-mcp",
+  "version": "0.1.0",
+  "description": "Agent-independent Computer Use MCP for Windows desktops, locally or over SSH.",
+  "type": "module",
+  "bin": {
+    "tacto-mcp": "bin/tacto.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "Apache-2.0",
+  "author": "Hopesy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hopesy/tacto-mcp.git"
+  },
+  "homepage": "https://github.com/Hopesy/tacto-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/Hopesy/tacto-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "computer-use",
+    "desktop",
+    "automation",
+    "windows",
+    "ssh",
+    "agent"
+  ],
+  "files": [
+    "bin/",
+    "*.ps1",
+    "*.cmd",
+    "*.cs",
+    "setup-vps.py",
+    "probe.mjs",
+    "cua-release.json",
+    "README.md",
+    "VERIFICATION.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "check": "node --check bin/tacto.mjs && node --check probe.mjs",
+    "prepublishOnly": "npm run check"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
