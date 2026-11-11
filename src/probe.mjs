@@ -2,6 +2,8 @@ import {spawn} from 'node:child_process';
 import {readFile} from 'node:fs/promises';
 import {createInterface} from 'node:readline';
 
+const {version} = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+
 const [path, selected] = process.argv.slice(2);
 if (!path) throw new Error('Usage: node probe.mjs <mcp.json> [server-name]');
 const config = JSON.parse((await readFile(path, 'utf8')).replace(/^\uFEFF/, ''));
@@ -66,7 +68,7 @@ async function waitForExit(ms) {
   return ended;
 }
 try {
-  const initialized = await request('initialize', {protocolVersion: '2025-06-18', capabilities: {}, clientInfo: {name: 'tacto-probe', version: '0.1.0'}});
+  const initialized = await request('initialize', {protocolVersion: '2025-06-18', capabilities: {}, clientInfo: {name: 'tacto-probe', version}});
   if (!['2024-11-05', '2025-03-26', '2025-06-18'].includes(initialized.protocolVersion)) throw new Error('Unsupported MCP protocol version');
   if (!initialized.serverInfo || !initialized.capabilities?.tools) throw new Error('MCP server did not advertise its tool capability');
   child.stdin.write(JSON.stringify({jsonrpc: '2.0', method: 'notifications/initialized'}) + '\n');

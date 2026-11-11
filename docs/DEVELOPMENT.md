@@ -52,14 +52,14 @@ python3 tests/test-vps.py
 ```sh
 node -e "require('node:fs').mkdirSync('.Tacto-temp',{recursive:true})"
 npm pack --pack-destination .Tacto-temp
-python tests/verify-package.py .Tacto-temp/tacto-mcp-0.1.0.tgz
+python tests/verify-package.py .Tacto-temp/tacto-mcp-0.1.1.tgz
 ```
 
 生成 Windows ZIP：
 
 ```powershell
 ./scripts/Package.ps1
-python tests/verify-package.py .Tacto-temp/packages/Tacto-0.1.0.zip
+python tests/verify-package.py .Tacto-temp/packages/Tacto-0.1.1.zip
 ```
 
 `Package.ps1 -CuaArchive <官方压缩包路径>` 将校验通过的原始 CUA 归档放入 ZIP 的 `vendor/`。打包程序保留源码目录结构；解压后的双击安装入口位于 `install/windows/`。
