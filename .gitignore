@@ -1,5 +1,4 @@
-.Tacto-temp/*
-!.Tacto-temp/tests/
+.Tacto-temp/
 node_modules/
 __pycache__/
 *.pyc

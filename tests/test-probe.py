@@ -4,8 +4,9 @@ import subprocess
 import tempfile
 import unittest
 
-root = Path(__file__).resolve().parent.parent
-probe = root.parent / 'probe.mjs'
+root = Path(__file__).resolve().parent.parent / '.Tacto-temp'
+root.mkdir(exist_ok=True)
+probe = root.parent / 'src/probe.mjs'
 fake = root / 'fake-mcp.mjs'
 fake.write_text('''import {createInterface} from 'node:readline';
 const mode = process.argv[2];

@@ -30,19 +30,17 @@
   ],
   "files": [
     "bin/",
-    "*.ps1",
-    "*.cmd",
-    "*.cs",
-    "setup-vps.py",
-    "probe.mjs",
-    "cua-release.json",
+    "src/",
+    "install/",
+    "resources/",
+    "scripts/Package.ps1",
+    "docs/",
     "README.md",
-    "VERIFICATION.md",
     "LICENSE",
     "NOTICE"
   ],
   "scripts": {
-    "check": "node --check bin/tacto.mjs && node --check probe.mjs",
+    "check": "node --check bin/tacto.mjs && node --check src/cli.mjs && node --check src/probe.mjs",
     "prepublishOnly": "npm run check"
   },
   "publishConfig": {

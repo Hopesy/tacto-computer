@@ -6,11 +6,12 @@ import subprocess
 import tempfile
 import unittest
 
-root = Path(__file__).resolve().parents[2]
+root = Path(__file__).resolve().parents[1]
 cli = root / 'bin/tacto.mjs'
 
 class CliTest(unittest.TestCase):
     def setUp(self):
+        (root / '.Tacto-temp').mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(prefix='cli-', dir=root / '.Tacto-temp')
         self.folder = Path(self.temp.name)
     def tearDown(self):
@@ -19,7 +20,7 @@ class CliTest(unittest.TestCase):
         return subprocess.run(['node',str(cli),*map(str,args)],capture_output=True,text=True,encoding='utf-8',timeout=20)
     def test_help_and_validation(self):
         self.assertIn('setup --local',self.invoke('--help').stdout)
-        self.assertEqual(self.invoke('--version').stdout.strip(),'0.1.0')
+        self.assertEqual(self.invoke('--version').stdout.strip(),json.loads((root / 'package.json').read_text())['version'])
         for args in [('unknown',),('mcp','--invalid'),('config','--ssh','my-vps'),('config','--proxy','relative/path'),('config','--ssh','-bad','--proxy','/tmp/proxy')]:
             with self.subTest(args=args):
                 result=self.invoke(*args)

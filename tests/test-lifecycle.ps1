@@ -1,8 +1,8 @@
 ﻿param([ValidateSet('Local','Remote')][string]$TestMode='Remote')
 $ErrorActionPreference = 'Stop'
-$repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$fixture = Join-Path (Split-Path $PSScriptRoot) ('lifecycle ' + [guid]::NewGuid().ToString('N'))
-. "$repo\Setup-Tacto.ps1" -LibraryOnly -Mode $TestMode -VpsHost example.test -VpsUser tester -DeviceName lifecycle-pc -InstallDirectory $fixture
+$repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$fixture = Join-Path (Join-Path $repo '.Tacto-temp') ('lifecycle ' + [guid]::NewGuid().ToString('N'))
+. "$repo\install\windows\Setup-Tacto.ps1" -LibraryOnly -Mode $TestMode -VpsHost example.test -VpsUser tester -DeviceName lifecycle-pc -InstallDirectory $fixture
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 $Unattended = $true
 Assert ((Read-Setting 'device' '' 'default-device') -eq 'default-device') 'Unattended mode failed to use default'

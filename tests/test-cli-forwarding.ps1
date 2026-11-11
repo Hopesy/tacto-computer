@@ -1,6 +1,6 @@
-$ErrorActionPreference = 'Stop'
-$repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$fixture = Join-Path (Split-Path $PSScriptRoot) ('forwarding space-' + [guid]::NewGuid().ToString('N'))
+﻿$ErrorActionPreference = 'Stop'
+$repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$fixture = Join-Path (Join-Path $repo '.Tacto-temp') ('forwarding space-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force $fixture | Out-Null
 $preload = Join-Path $fixture 'preload.mjs'
 $source = @'
@@ -25,7 +25,7 @@ try {
     & node --import $preloadUri (Join-Path $repo 'bin/tacto.mjs') setup --local --unattended --install-dir (Join-Path $fixture 'install dir') --device-name test-pc
     if ($LASTEXITCODE) { throw 'CLI setup failed' }
     $arguments = (Get-Content $env:TACTO_TEST_ARGS -Raw | ConvertFrom-Json).args
-    if ($arguments -notcontains '-Unattended' -or $arguments -notcontains 'Local' -or $arguments -notcontains (Join-Path $repo 'Setup-Tacto.ps1')) { throw 'CLI forwarded wrong installer arguments' }
+    if ($arguments -notcontains '-Unattended' -or $arguments -notcontains 'Local' -or $arguments -notcontains (Join-Path $repo 'install/windows/Setup-Tacto.ps1')) { throw 'CLI forwarded wrong installer arguments' }
     if ($arguments -notcontains (Join-Path $fixture 'install dir')) { throw 'CLI changed path containing spaces' }
     & node --import $preloadUri (Join-Path $repo 'bin/tacto.mjs') update --unattended --install-dir (Join-Path $fixture 'install dir')
     if ($LASTEXITCODE) { throw 'CLI update failed' }

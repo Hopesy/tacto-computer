@@ -29,28 +29,29 @@ jobs:
             [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$parseErrors) | Out-Null
             if ($parseErrors) { throw $parseErrors }
           }
-          python .Tacto-temp/tests/test-cli.py
+          python tests/test-cli.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python .Tacto-temp/tests/test-probe.py
+          python tests/test-probe.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Isolated Windows lifecycle and exports
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File .Tacto-temp/tests/test-cli-forwarding.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-cli-forwarding.ps1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          powershell -NoProfile -ExecutionPolicy Bypass -File .Tacto-temp/tests/test-lifecycle.ps1 -TestMode Local
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-lifecycle.ps1 -TestMode Local
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          powershell -NoProfile -ExecutionPolicy Bypass -File .Tacto-temp/tests/test-lifecycle.ps1 -TestMode Remote
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-lifecycle.ps1 -TestMode Remote
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          powershell -NoProfile -ExecutionPolicy Bypass -File .Tacto-temp/tests/test-exports.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-exports.ps1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Validate distributable packages
         run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           npm pack --pack-destination .Tacto-temp
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python .Tacto-temp/tests/verify-package.py .Tacto-temp/tacto-mcp-0.1.0.tgz
+          python tests/verify-package.py ".Tacto-temp/tacto-mcp-$version.tgz"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          ./Package.ps1
-          python .Tacto-temp/tests/verify-package.py .Tacto-temp/packages/Tacto-0.1.0.zip
+          ./scripts/Package.ps1
+          python tests/verify-package.py ".Tacto-temp/packages/Tacto-$version.zip"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
   linux:
     runs-on: ubuntu-latest
@@ -66,6 +67,6 @@ jobs:
       - name: CLI, MCP protocol and isolated VPS setup
         run: |
           npm run check
-          python .Tacto-temp/tests/test-cli.py
-          python .Tacto-temp/tests/test-probe.py
-          python .Tacto-temp/tests/test-vps.py
+          python tests/test-cli.py
+          python tests/test-probe.py
+          python tests/test-vps.py

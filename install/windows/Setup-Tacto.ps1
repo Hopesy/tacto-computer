@@ -19,6 +19,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
 $script:PackageDirectory = $PSScriptRoot
+$script:PackageRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $script:ConfigPath = Join-Path $InstallDirectory 'desktop.json'
 $script:Utf8 = [Text.UTF8Encoding]::new($false)
 $script:InteractiveInstall = -not $VpsHost
@@ -152,7 +153,7 @@ function Install-Cua($Config) {
         return
     }
     if ($Config.DriverPath -and -not $Config.DriverOwned) { return }
-    $release = Get-Content (Join-Path $script:PackageDirectory 'cua-release.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $release = Get-Content (Join-Path $script:PackageRoot 'resources/cua-release.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $target = Join-Path $InstallDirectory ('cua-' + $release.version)
     $Config.DriverPath = Join-Path $target 'cua-driver.exe'
     $Config.DriverOwned = $true
@@ -160,7 +161,7 @@ function Install-Cua($Config) {
     $cache = Join-Path $InstallDirectory '.Tacto-temp\downloads'
     New-Item -ItemType Directory -Force $cache | Out-Null
     $archive = Join-Path $cache ('cua-' + $release.version + '.zip')
-    $bundled = Join-Path $script:PackageDirectory ('vendor\cua-' + $release.version + '.zip')
+    $bundled = Join-Path $script:PackageRoot ('vendor\cua-' + $release.version + '.zip')
     if (-not (Test-Path -LiteralPath $archive) -and (Test-Path -LiteralPath $bundled)) { Copy-Item -LiteralPath $bundled -Destination $archive }
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     if (-not (Test-Path -LiteralPath $archive)) { Invoke-WebRequest -UseBasicParsing -Uri $release.url -OutFile $archive }
@@ -189,7 +190,7 @@ function Invoke-Vps($Config, [string]$RemoteAction, [switch]$Bootstrap) {
         if ($Unattended) { $sshArgs += @('-o','BatchMode=yes','-o','StrictHostKeyChecking=yes') }
         else { $sshArgs += @('-o','StrictHostKeyChecking=ask') }
         if ($IdentityFile) { $sshArgs += @('-i',(Resolve-Path -LiteralPath $IdentityFile).Path) }
-        $source = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $script:PackageDirectory 'setup-vps.py')))
+        $source = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $script:PackageRoot 'install/linux/setup-vps.py')))
         $command = 'python3 -c "import base64;code=base64.b64decode(''{0}'').decode();exec(compile(code,''<bootstrap>'',''exec''),dict(__name__=''__main__'',__file__=''<bootstrap>'',BOOTSTRAP_SOURCE=code))" {1}' -f $source,$payload
     } else {
         $sshArgs += @('-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-i',$Config.TunnelKey)

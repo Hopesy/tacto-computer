@@ -1,6 +1,7 @@
 ﻿$ErrorActionPreference = 'Stop'
-$exporter = Join-Path (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path 'Export-McpConfig.ps1'
-$fixture = Join-Path (Split-Path $PSScriptRoot) ('export space-' + [guid]::NewGuid().ToString('N'))
+$repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$exporter = Join-Path $repo 'install/windows/Export-McpConfig.ps1'
+$fixture = Join-Path (Join-Path $repo '.Tacto-temp') ('export space-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixture | Out-Null
 $driver = Join-Path $fixture "quote's cua-driver.exe"
 [IO.File]::WriteAllText($driver, '')

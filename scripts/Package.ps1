@@ -1,17 +1,25 @@
 ﻿param(
     [string]$CuaArchive,
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '.Tacto-temp\packages')
+    [string]$OutputDirectory = (Join-Path (Split-Path $PSScriptRoot -Parent) '.Tacto-temp\packages')
 )
 $ErrorActionPreference = 'Stop'
-$version = '0.1.0'
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$metadata = Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$version = $metadata.version
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 $staging = Join-Path $output ('.Tacto-temp\' + [guid]::NewGuid().ToString('N'))
 $package = Join-Path $staging ('Tacto-' + $version)
 New-Item -ItemType Directory -Force $package,$output | Out-Null
-$files = @('Install.cmd','Install-Local.cmd','Update.cmd','Check.cmd','Uninstall.cmd','Setup-Tacto.ps1','Export-McpConfig.ps1','setup-vps.py','BackgroundLauncher.cs','Start-Tunnel.ps1','Invoke-CuaBridge.ps1','cua-release.json','probe.mjs','Package.ps1','README.md','VERIFICATION.md','LICENSE','NOTICE','package.json','bin/tacto.mjs')
-foreach ($name in $files) { New-Item -ItemType Directory -Force (Split-Path (Join-Path $package $name)) | Out-Null; Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $package $name) }
+$files = @('README.md','LICENSE','NOTICE','package.json')
+foreach ($directory in @('bin','src','install','resources','scripts','docs')) {
+    $files += Get-ChildItem -LiteralPath (Join-Path $projectRoot $directory) -File -Recurse | ForEach-Object { $_.FullName.Substring($projectRoot.Length + 1) }
+}
+foreach ($name in $files) {
+    New-Item -ItemType Directory -Force (Split-Path (Join-Path $package $name)) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $projectRoot $name) -Destination (Join-Path $package $name)
+}
 if ($CuaArchive) {
-    $release = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'cua-release.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $release = Get-Content -LiteralPath (Join-Path $projectRoot 'resources/cua-release.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     if ((Get-FileHash -LiteralPath $CuaArchive -Algorithm SHA256).Hash -ne $release.sha256) { throw 'CUA archive hash mismatch' }
     New-Item -ItemType Directory -Force (Join-Path $package 'vendor') | Out-Null
     Copy-Item -LiteralPath $CuaArchive -Destination (Join-Path $package ('vendor\cua-' + $release.version + '.zip'))

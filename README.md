@@ -150,7 +150,7 @@ Windows 主动建立 `VPS 127.0.0.1:分配端口 → Windows 127.0.0.1:SSH端口
 
 ## ZIP 与源码安装
 
-也可下载 [GitHub 源码 ZIP](https://github.com/Hopesy/tacto-mcp/archive/refs/heads/main.zip)，解压后双击 `Install-Local.cmd` 或 `Install.cmd`。源码安装自动下载 `cua-release.json` 中固定的 CUA 版本。
+也可下载 [GitHub 源码 ZIP](https://github.com/Hopesy/tacto-mcp/archive/refs/heads/main.zip)，解压后进入 `install/windows/`，双击 `Install-Local.cmd` 或 `Install.cmd`。源码安装自动下载 `resources/cua-release.json` 中固定的 CUA 版本。
 
 开发和打包：
 
@@ -158,10 +158,31 @@ Windows 主动建立 `VPS 127.0.0.1:分配端口 → Windows 127.0.0.1:SSH端口
 git clone https://github.com/Hopesy/tacto-mcp.git
 cd tacto-mcp
 npm run check
+node bin/tacto.mjs --help
+node -e "require('node:fs').mkdirSync('.Tacto-temp',{recursive:true})"
 npm pack --pack-destination .Tacto-temp
 ```
 
-Windows 下运行 `Package.ps1` 生成独立安装 ZIP、manifest 和 SHA256；`-CuaArchive` 可附带固定版本的官方原始归档。npm 包包含 CLI、脚本和文档；CUA 在执行 `setup` 时安装。测试入口位于 `.Tacto-temp/tests`，运行产物保存在 `.Tacto-temp`。
+Windows 下运行 `scripts/Package.ps1` 生成独立安装 ZIP、manifest 和 SHA256；`-CuaArchive` 可附带固定版本的官方原始归档。npm 包包含 CLI、脚本和文档；CUA 在执行 `setup` 时安装。
+
+## 项目目录
+
+```text
+tacto-mcp/
+├── bin/               npm 命令入口
+├── src/               CLI 与 MCP 检查器
+├── install/
+│   ├── windows/       Windows 安装器、双击入口、后台启动器
+│   └── linux/         VPS 初始化脚本
+├── resources/         固定 CUA 版本与校验信息
+├── scripts/           打包工具
+├── docs/              开发说明与验证记录
+├── tests/             正式回归测试
+├── .github/workflows/ Windows、Linux CI
+└── .Tacto-temp/       本地过程脚本、测试产物与安装包（Git 忽略）
+```
+
+开发、测试和打包命令见 [开发说明](docs/DEVELOPMENT.md)。
 
 ## 来源与验证
 
@@ -169,4 +190,4 @@ Tacto CLI 和安装脚本采用 [Apache-2.0](LICENSE)，来源说明见 [NOTICE]
 
 工具清单由 CUA 实时提供，包括窗口读取、点击、输入、键盘、滚动和浏览器操作。MCP 连接遵循标准 stdio 的初始化、工具发现与调用流程。
 
-验证结果和目标电脑验收范围见 [VERIFICATION.md](VERIFICATION.md)。
+验证结果和目标电脑验收范围见 [验证记录](docs/VERIFICATION.md)。

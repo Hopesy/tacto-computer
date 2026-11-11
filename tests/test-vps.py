@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
-source = Path(__file__).resolve().parents[2] / 'setup-vps.py'
+source = Path(__file__).resolve().parents[1] / 'install/linux/setup-vps.py'
 spec = importlib.util.spec_from_file_location('setup_vps', source)
 setup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(setup)
