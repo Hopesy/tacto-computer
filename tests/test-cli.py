@@ -16,8 +16,8 @@ class CliTest(unittest.TestCase):
         self.folder = Path(self.temp.name)
     def tearDown(self):
         self.temp.cleanup()
-    def invoke(self, *args):
-        return subprocess.run(['node',str(cli),*map(str,args)],capture_output=True,text=True,encoding='utf-8',timeout=20)
+    def invoke(self, *args, env=None):
+        return subprocess.run(['node',str(cli),*map(str,args)],capture_output=True,text=True,encoding='utf-8',timeout=20,env={**os.environ,**(env or {})})
     def test_help_and_validation(self):
         self.assertIn('setup --local',self.invoke('--help').stdout)
         self.assertEqual(self.invoke('--version').stdout.strip(),json.loads((root / 'package.json').read_text())['version'])
@@ -55,9 +55,9 @@ class CliTest(unittest.TestCase):
     @unittest.skipUnless(os.name!='nt','Unix executable proxy')
     def test_local_proxy(self):
         proxy=self.folder/'cua-proxy'
-        proxy.write_text('#!/bin/sh\nprintf "proxy reached\\n"\n')
+        proxy.write_text('#!/bin/sh\n[ -z "$npm_config_package$npm_config_call" ] || exit 9\nprintf "proxy reached\\n"\n')
         proxy.chmod(0o700)
-        result=self.invoke('mcp','--proxy',proxy)
+        result=self.invoke('mcp','--proxy',proxy,env={'npm_config_package':'["unrelated-package"]','npm_config_call':'unrelated-command'})
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(result.stdout,'proxy reached\n')
 

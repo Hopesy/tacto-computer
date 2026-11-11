@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -10,6 +11,7 @@ probe = root.parent / 'src/probe.mjs'
 fake = root / 'fake-mcp.mjs'
 fake.write_text('''import {createInterface} from 'node:readline';
 const mode = process.argv[2];
+if (mode === 'nested' && (process.env.npm_config_package || process.env.npm_config_call)) process.exit(9);
 createInterface({input:process.stdin}).on('line', line => {
  const m = JSON.parse(line); if (!m.id) return;
  if (mode === 'invalid') { console.log('not-json'); return; }
@@ -22,15 +24,19 @@ createInterface({input:process.stdin}).on('line', line => {
 ''', encoding='utf-8')
 
 class ProbeTest(unittest.TestCase):
-    def invoke(self, mode):
+    def invoke(self, mode, env=None):
         with tempfile.TemporaryDirectory(prefix='probe-', dir=root) as folder:
             config = Path(folder) / 'mcp.json'
             config.write_text(json.dumps({'mcpServers': {'fixture': {'command':'node','args':[str(fake),mode]}}}))
-            return subprocess.run(['node',str(probe),str(config)],capture_output=True,text=True,timeout=15)
+            return subprocess.run(['node',str(probe),str(config)],capture_output=True,text=True,timeout=15,env={**os.environ,**(env or {})})
     def test_paginated_discovery(self):
         result = self.invoke('success')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(json.loads(result.stdout)['tools'],['first','second'])
+    def test_nested_npm_options_are_scoped_to_parent(self):
+        result=self.invoke('nested',{'npm_config_package':'["unrelated-package"]','npm_config_call':'unrelated-command'})
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(json.loads(result.stdout)['toolCount'],2)
     def test_invalid_responses(self):
         for mode, text in [('invalid','non-JSON'),('exit','exited'),('version','protocol version'),('cursor','pagination')]:
             with self.subTest(mode=mode):

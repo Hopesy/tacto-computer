@@ -7,6 +7,7 @@
 - `tacto-mcp` 提供 setup、update、check、uninstall、config、mcp、probe 命令；npm 包的本地安装与版本入口已实测。
 - Tacto CLI 连接现有 CUA 完成真实 MCP 握手，发现 63 个工具；测试配置位于独立临时目录。
 - CLI 测试覆盖参数校验、SSH 引号与路径、本机配置、已有文件保护和安装参数转发；安装器覆盖自动模式默认值和缺失参数提示。
+- 子进程隔离父级 npm exec 的 package/call 参数，验证通过 npx 启动的检查器再次调用 npx MCP 服务时能正常解析命令。
 - Windows 和 Linux CI 使用隔离测试验证安装生命周期、VPS 初始化、配置导出、MCP 分页与错误处理；正式测试位于 `tests/`，运行产物位于 `.Tacto-temp/`。
 
 ## 实际协议与进程验证

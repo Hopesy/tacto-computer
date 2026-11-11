@@ -3,6 +3,7 @@ import {readFile, writeFile, mkdir, stat} from 'node:fs/promises';
 import {hostname, homedir} from 'node:os';
 import {dirname, isAbsolute, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {childEnvironment} from './process-env.mjs';
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const metadata = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
@@ -53,7 +54,7 @@ async function file(path) {
 
 function run(command, args, env = {}) {
   return new Promise((resolveResult, reject) => {
-    const child = spawn(command, args, {stdio: 'inherit', windowsHide: true, env: {...process.env, ...env}});
+    const child = spawn(command, args, {stdio: 'inherit', windowsHide: true, env: childEnvironment(env)});
     const interrupt = () => child.kill('SIGINT');
     const terminate = () => child.kill('SIGTERM');
     process.on('SIGINT', interrupt);

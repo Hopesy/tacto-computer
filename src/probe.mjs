@@ -1,6 +1,7 @@
 import {spawn} from 'node:child_process';
 import {readFile} from 'node:fs/promises';
 import {createInterface} from 'node:readline';
+import {childEnvironment} from './process-env.mjs';
 
 const {version} = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -13,7 +14,7 @@ const server = name && config.mcpServers[name];
 if (!server || typeof server.command !== 'string' || !Array.isArray(server.args) || !server.args.every(arg => typeof arg === 'string')) {
   throw new Error('Select one stdio MCP server with command and args.');
 }
-const child = spawn(server.command, server.args, {stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: {...process.env, ...server.env}});
+const child = spawn(server.command, server.args, {stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: childEnvironment(server.env)});
 child.stderr.resume();
 const pending = new Map();
 let nextId = 0;
