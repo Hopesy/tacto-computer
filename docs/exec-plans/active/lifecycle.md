@@ -4,8 +4,8 @@
 
 Goal: improve frictionless install, upgrade rollback and complete uninstall; implement the previously reviewed CUA guidance, test, push GitHub and publish npm with updated README.
 Baseline: 0.1.2, commit 93a32b4, clean worktree. Windows PowerShell 5.1 and Node 22+ remain supported. Process artifacts belong in `.Tacto-temp/`. User authorized repository push and npm release.
-Current slice: finish lifecycle validation and publish. Latest user correction: keep npm/command-based installation simple; remove the added EXE graphical installer. Existing production CUA/tunnel remain untouched; real tests use independent identities and pipes.
-Next: push the validated source, verify both GitHub CI jobs, create the ZIP release, publish npm and verify the public package.
+Current slice: verify public npm availability. Source and GitHub ZIP are released; Windows/Linux CI and both native lifecycle scenarios passed. Latest user correction: keep npm/command-based installation simple; remove the added EXE graphical installer. Existing production CUA/tunnel remain untouched; real tests use independent identities and pipes.
+Next: wait for npm's accepted upload to become publicly available, verify its digest and fresh @latest CLI execution, then archive this plan. See [release history](../../histories/2026-11-12-v0.2.0.md).
 
 ## Checklist
 
@@ -28,3 +28,4 @@ Next: push the validated source, verify both GitHub CI jobs, create the ZIP rele
 - Regression coverage also includes legacy task-snapshot rollback, retained remote authorization, unchanged owned OpenSSH restoration, edited configuration preservation, updater on/off and busy deferral, compressed SSH bootstrap and VPS Skill synchronization.
 - Fixed real findings: PowerShell download stalls (use bounded system curl), missing custom PID-file during status, bridge stream buffering, async VPS line buffering, and Windows image-handle cleanup races. Full diagnostics can report third-party UIA degradation/timeouts; activation has separate bounded core/capture checks.
 - Package source/content/manifest validation passed. npm login refreshed. Deployment-specific acceptance still includes fresh OpenSSH/UAC/password login, new real VPS setup and whole-machine reboot; documented in VERIFICATION.md.
+- GitHub release and CI completed. The renewed npm account verification succeeded; publish returned HTTP 202 and exit 0 at 13:40:43 UTC+08. As of 13:49, the public registry still serves 0.1.2 and 0.2.0 remains unavailable. Account verification is finished; public visibility is the remaining external dependency.
