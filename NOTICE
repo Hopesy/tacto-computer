@@ -9,3 +9,7 @@ Node.js CLI, packaging, and installation documentation.
 The installation scripts and CLI are distributed under Apache-2.0; see LICENSE.
 CUA Driver is a separate upstream component from https://github.com/trycua/cua.
 Its official release archive and applicable upstream notices remain intact.
+
+The unchanged official CUA Skill pack under resources/cua-skill is distributed
+under the MIT License (Copyright Cua AI, Inc.). Its LICENSE and source.json record
+the upstream license, release URL, archive digest and individual file digests.

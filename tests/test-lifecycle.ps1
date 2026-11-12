@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $fixture = Join-Path (Join-Path $repo '.Tacto-temp') ('lifecycle ' + [guid]::NewGuid().ToString('N'))
-. "$repo\install\windows\Setup-Tacto.ps1" -LibraryOnly -Mode $TestMode -VpsHost example.test -VpsUser tester -DeviceName lifecycle-pc -InstallDirectory $fixture
+. "$repo\install\windows\Setup-Tacto.ps1" -LibraryOnly -NoSkills -Mode $TestMode -VpsHost example.test -VpsUser tester -DeviceName lifecycle-pc -InstallDirectory $fixture
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 $Unattended = $true
 Assert ((Read-Setting 'device' '' 'default-device') -eq 'default-device') 'Unattended mode failed to use default'
@@ -32,7 +32,7 @@ function Invoke-Vps($Config,$RemoteAction,[switch]$Bootstrap) {
     if ($script:offline) { throw 'Injected VPS offline' }; $script:remoteActions += $RemoteAction
     $script:clientIds += $Config.ClientId
     switch ($RemoteAction) {
-        'prepare' { [pscustomobject]@{managementVersion=1;reversePort=22227;windowsKey='ssh-ed25519 AQID callback';mcpName='computer-lifecycle-pc';mcp=@{command='/fixture/cua-proxy';args=@()}} }
+        'prepare' { [pscustomobject]@{managementVersion=2;reversePort=22227;windowsKey='ssh-ed25519 AQID callback';mcpName='computer-lifecycle-pc';mcp=@{command='/fixture/cua-proxy';args=@()}} }
         'check' { [pscustomobject]@{status='MCP healthy';health=(Invoke-McpHealth $Config)} }
         'remove' { [pscustomobject]@{removed=$true} }
     }

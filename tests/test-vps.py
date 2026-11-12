@@ -93,6 +93,45 @@ class SetupTest(unittest.TestCase):
         self.assertFalse(receipt.exists())
         self.assertFalse(folder.exists())
 
+    def test_official_pack_update_rollback_and_edited_cleanup(self):
+        state=setup.execute(dict(self.request),self.home)
+        folder=self.home/'.tacto/devices/test-laptop'
+        config=self.home/'agent.json'
+        skill=self.home/'skills/tacto-test-laptop/SKILL.md'
+        skill.parent.mkdir(parents=True)
+        skill.write_text('old')
+        receipt=Path(str(config)+'.tacto-test-laptop.json')
+        config.write_text(json.dumps({'mcpServers':{state['mcpName']:state['mcp']}}))
+        receipt.write_text(json.dumps(dict(config=str(config),name=state['mcpName'],server=state['mcp'],skill=str(skill),skillHash=hashlib.sha256(b'old').hexdigest())))
+        (folder/'agent-integrations.json').write_text(json.dumps([dict(clientId=state['clientId'],receipt=str(receipt))]))
+        files={'SKILL.md':'Use {{VPS_CLI}}', 'official/WINDOWS.md':'official '+ 'x'*100000, 'official/RUNTIME.md':'sessions'}
+        request=dict(action='configure',device='test-laptop',clientId='id-1',skillFiles=files)
+        result=setup.execute(request,self.home)
+        self.assertEqual(result['preservedIntegrations'],[])
+        self.assertIn('driver --proxy',skill.read_text())
+        reference=skill.parent/'official/WINDOWS.md'
+        self.assertEqual(reference.read_text(),files['official/WINDOWS.md'])
+        # A previous runtime can roll the same receipt back to its single-file Skill.
+        setup.execute(dict(action='configure',device='test-laptop',clientId='id-1',skillText='old'),self.home)
+        self.assertFalse(reference.exists())
+        self.assertEqual(skill.read_text(),'old')
+        setup.execute(request,self.home)
+        reference.write_text('user extension')
+        self.assertIn(str(reference),setup.execute(request,self.home)['preservedIntegrations'])
+        removed=setup.execute(dict(action='remove',device='test-laptop',clientId='id-1'),self.home)
+        self.assertEqual(removed['preservedIntegrations'],[str(reference)])
+        self.assertEqual(reference.read_text(),'user extension')
+        self.assertFalse(skill.exists())
+        self.assertFalse((reference.parent/'RUNTIME.md').exists())
+        with self.assertRaises(ValueError): setup.skill_files({'skillFiles':{'SKILL.md':'x','../escape':'x'}},folder)
+
+    def test_stdin_protocol_accepts_pack_larger_than_windows_command_limit(self):
+        request=dict(self.request,device='../bad',skillFiles={'SKILL.md':'x'*100000})
+        proc=subprocess.run(['python3',str(source),'tacto-stdin-v2'],input=json.dumps(request),capture_output=True,text=True)
+        self.assertEqual(proc.returncode,1)
+        self.assertIn('Computer name',proc.stdout)
+        self.assertNotIn('base64',proc.stdout)
+
     def test_mcp_health_stream_and_core_failure(self):
         fake = self.home/'mcp.py'
         fake.write_text('''import json,sys

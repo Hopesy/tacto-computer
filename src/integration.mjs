@@ -1,9 +1,9 @@
 import {readFile, writeFile, rename, mkdir, rm, rmdir, stat} from 'node:fs/promises';
-import {dirname, join, resolve} from 'node:path';
-import {createHash, randomUUID} from 'node:crypto';
+import {dirname, basename, join, resolve, relative} from 'node:path';
+import {randomUUID} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
+import {hash, skillFiles, cliPrefix, detectSkillDirectories} from './skills.mjs';
 
-const hash = text => createHash('sha256').update(text).digest('hex');
 async function read(path) { try { return await readFile(path, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } }
 async function atomic(path, text) {
   await mkdir(dirname(path), {recursive: true});
@@ -17,32 +17,51 @@ function paths(options) {
   const device = options['device-name'];
   return {config, device, name: `computer-${device}`, receipt: `${config}.tacto-${device}.json`};
 }
+function ownedFiles(record) {
+  if (!record) return [];
+  const files=record.files ?? (record.skill ? [{path:record.skill,hash:record.skillHash,root:dirname(record.skill)}] : []);
+  for (const file of files) {
+    const local=relative(file.root,file.path).replaceAll('\\','/');
+    if (basename(file.root)!==record.name.replace(/^computer-/,'tacto-') || !/^(SKILL\.md|official\/[A-Za-z0-9_.-]+)$/.test(local)) throw new Error('Invalid Skill ownership path');
+  }
+  return files;
+}
+async function prune(files) {
+  const dirs=[...new Set(files.flatMap(file=>[dirname(file.path),file.root]))].sort((a,b)=>b.length-a.length);
+  for (const dir of dirs) { try { await rmdir(dir); } catch(error) { if (!['ENOENT','ENOTEMPTY','EEXIST'].includes(error.code)) throw error; } }
+}
 export async function connectAgent(options, server, packageRoot) {
   const {config, device, name, receipt} = paths(options);
-  if (!options['skill-dir']) throw new Error('Provide --skill-dir, the Agent host skill directory');
+  if (options['no-skills'] && options['skill-dir']) throw new Error('Choose --skill-dir or --no-skills');
   const browser = options['browser-mode'] ?? 'isolated';
   if (!['isolated', 'existing'].includes(browser)) throw new Error('Browser mode must be isolated or existing');
-  const skill = join(resolve(options['skill-dir']), `tacto-${device}`, 'SKILL.md');
-  const originals = new Map();
-  for (const path of [config, skill, receipt]) originals.set(path, await read(path));
+  const originals = new Map([[config,await read(config)],[receipt,await read(receipt)]]);
   const previous = originals.get(receipt) ? JSON.parse(originals.get(receipt)) : null;
+  if (previous && (previous.config!==config || previous.name!==name)) throw new Error('Integration receipt does not match this connection');
+  const oldFiles=ownedFiles(previous);
+  const directories=options['no-skills'] ? [] : options['skill-dir'] ? [resolve(options['skill-dir'])] : previous ? [...new Set(oldFiles.map(file=>dirname(file.root)))] : await detectSkillDirectories();
+  const roots=directories.map(dir=>join(dir,`tacto-${device}`));
+  const content=roots.length ? await skillFiles(packageRoot,device,browser,cliPrefix(options)) : {};
+  const files=roots.flatMap(root=>Object.entries(content).map(([name,text])=>({root,path:join(root,name),hash:hash(text),text})));
+  const oldMap=new Map(oldFiles.map(file=>[file.path,file]));
+  for (const file of [...files,...oldFiles]) {
+    if (!originals.has(file.path)) originals.set(file.path,await read(file.path));
+    const text=originals.get(file.path);
+    if (text!==null && hash(text)!==oldMap.get(file.path)?.hash) throw new Error('Preserve the existing or edited target Skill before connecting');
+  }
   const document = originals.get(config) ? JSON.parse(originals.get(config).replace(/^\uFEFF/, '')) : {};
   if (!document || typeof document !== 'object' || Array.isArray(document)) throw new Error('Expected an MCP JSON object');
   document.mcpServers ??= {};
   if (!document.mcpServers || typeof document.mcpServers !== 'object' || Array.isArray(document.mcpServers)) throw new Error('Expected mcpServers object');
   const existing = document.mcpServers[name];
   if (existing && (!previous || JSON.stringify(existing) !== JSON.stringify(previous.server))) throw new Error(`Preserve the existing or edited ${name} entry before connecting`);
-  if (originals.get(skill) && (!previous || hash(originals.get(skill)) !== previous.skillHash || previous.skill !== skill)) throw new Error('Preserve the existing or edited target Skill before connecting');
-  if (previous && previous.skill !== skill) throw new Error('Disconnect the previous integration before changing its Skill directory');
-  const template = await readFile(join(packageRoot, 'resources', 'tacto-skill.md'), 'utf8');
-  const text = template.replaceAll('{{DEVICE}}', device).replaceAll('{{SERVER}}', name).replaceAll('{{BROWSER}}', browser);
   document.mcpServers[name] = server;
-  let registry;
-  let registration;
+  let registry, registration;
   if (options.proxy && !options.ssh) {
     const stateText = await read(join(dirname(resolve(options.proxy)), 'state.json'));
     const state = stateText && JSON.parse(stateText);
     if (state?.device === device && state.mcp?.command === resolve(options.proxy) && state.clientId) {
+      if (state.managementVersion<2 && files.length) throw new Error('Update Tacto on the Windows PC before installing managed official Skills on this VPS');
       registry = join(dirname(resolve(options.proxy)), 'agent-integrations.json');
       const old = await read(registry);
       originals.set(registry, old);
@@ -50,16 +69,21 @@ export async function connectAgent(options, server, packageRoot) {
       registration = [...entries.filter(entry => entry.receipt !== receipt), {clientId: state.clientId, receipt}];
     }
   }
+  const skill=files.find(file=>file.path===join(file.root,'SKILL.md'))?.path ?? null;
   try {
     await atomic(config, JSON.stringify(document, null, 2) + '\n');
-    await atomic(skill, text);
-    await atomic(receipt, JSON.stringify({schema: 1, config, name, server, skill, skillHash: hash(text)}, null, 2) + '\n');
+    for (const file of files) await atomic(file.path,file.text);
+    const desired=new Set(files.map(file=>file.path));
+    for (const file of oldFiles) if (!desired.has(file.path)) await rm(file.path,{force:true});
+    await atomic(receipt, JSON.stringify({schema:2,config,name,server,skill,skillHash:skill?hash(content['SKILL.md']):null,files:files.map(({text,...file})=>file)}, null, 2) + '\n');
     if (registry) await atomic(registry, JSON.stringify(registration, null, 2) + '\n');
   } catch (error) {
     for (const [path, original] of originals) { if (original === null) await rm(path, {force: true}); else await atomic(path, original); }
+    await prune(files);
     throw error;
   }
-  return {ok: true, config, skill, receipt, targetPlatform: 'win32', name, deviceCleanupRegistered: Boolean(registry)};
+  await prune(oldFiles);
+  return {ok:true,config,skill,skills:roots,receipt,targetPlatform:'win32',name,deviceCleanupRegistered:Boolean(registry)};
 }
 export async function disconnectAgent(options) {
   const {config, name, receipt} = paths(options);
@@ -67,6 +91,7 @@ export async function disconnectAgent(options) {
   if (!saved) return {ok: true, alreadyDisconnected: true};
   const record = JSON.parse(saved);
   if (record.config !== config || record.name !== name) throw new Error('Integration receipt does not match this connection');
+  const files=ownedFiles(record);
   const preserved = [];
   const source = await read(config);
   if (source) {
@@ -76,13 +101,14 @@ export async function disconnectAgent(options) {
       delete document.mcpServers[name]; await atomic(config, JSON.stringify(document, null, 2) + '\n');
     } else if (entry) preserved.push(config);
   }
-  const text = await read(record.skill);
-  if (text && hash(text) === record.skillHash) {
-    await rm(record.skill);
-    try { await rmdir(dirname(record.skill)); } catch (error) { if (error.code !== 'ENOTEMPTY') throw error; }
-  } else if (text) preserved.push(record.skill);
+  for (const file of files) {
+    const text=await read(file.path);
+    if (text!==null && hash(text)===file.hash) await rm(file.path);
+    else if (text!==null) preserved.push(file.path);
+  }
+  await prune(files);
   if (!preserved.length) await rm(receipt);
-  return {ok: true, preserved};
+  return {ok:true,preserved};
 }
 export async function cleanupRemote(options, packageRoot, run) {
   if (!options.receipt) throw new Error('Provide --receipt from the local uninstall');

@@ -16,6 +16,7 @@ param(
     [string]$McpConfig,
     [string]$SkillDirectory,
     [ValidateSet('isolated','existing')][string]$BrowserMode = 'isolated',
+    [switch]$NoSkills,
     [switch]$KeepConfig,
     [switch]$Force,
     [int]$ParentConsolePid,
@@ -43,11 +44,12 @@ function Quote-Argument([string]$Value) {
     '"' + [regex]::Replace([regex]::Replace($Value, '(\\*)"', '$1$1\"'), '(\\+)$', '$1$1') + '"'
 }
 
-function Invoke-ProcessResult([string]$Executable, [string[]]$Arguments, [switch]$Interactive, [int]$TimeoutSeconds=180) {
+function Invoke-ProcessResult([string]$Executable, [string[]]$Arguments, [switch]$Interactive, [int]$TimeoutSeconds=180, [string]$InputText) {
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $Executable
     $info.Arguments = ($Arguments | ForEach-Object { Quote-Argument $_ }) -join ' '
     $info.UseShellExecute = $false
+    $info.RedirectStandardInput = $PSBoundParameters.ContainsKey('InputText')
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = -not $Interactive
     $info.CreateNoWindow = -not $Interactive
@@ -57,6 +59,11 @@ function Invoke-ProcessResult([string]$Executable, [string[]]$Arguments, [switch
         $process.Start() | Out-Null
         $outputTask = $process.StandardOutput.ReadToEndAsync()
         $errorTask = if (-not $Interactive) { $process.StandardError.ReadToEndAsync() } else { $null }
+        if ($info.RedirectStandardInput) {
+            $inputBytes=$script:Utf8.GetBytes($InputText)
+            $process.StandardInput.BaseStream.Write($inputBytes,0,$inputBytes.Length)
+            $process.StandardInput.Close()
+        }
         if ($Interactive) { $process.WaitForExit() }
         elseif (-not $process.WaitForExit($TimeoutSeconds * 1000)) { $process.Kill(); $process.WaitForExit(); throw "$Executable timed out after $TimeoutSeconds seconds." }
         return @{ Code=$process.ExitCode; Output=$outputTask.Result; Error=$(if ($errorTask) { $errorTask.Result } else { '' }) }
@@ -122,7 +129,7 @@ function Ensure-Elevation {
     }
     if ($script:ModeSpecified) { $forward += @('-Mode',$Mode) }
     if ($script:BrowserModeSpecified) { $forward += @('-BrowserMode',$BrowserMode) }
-    foreach ($flag in @('Unattended','KeepConfig','Force')) { if (Get-Variable -Name $flag -ValueOnly) { $forward += '-' + $flag } }
+    foreach ($flag in @('Unattended','KeepConfig','Force','NoSkills')) { if (Get-Variable -Name $flag -ValueOnly) { $forward += '-' + $flag } }
     $forward += @('-VpsPort',"$VpsPort",'-ReversePort',"$ReversePort",'-LocalSshPort',"$LocalSshPort")
     $arguments = ($forward | ForEach-Object { Quote-Argument $_ }) -join ' '
     # Interactive SSH prompts reuse the original terminal; background helpers stay hidden.
@@ -231,9 +238,7 @@ function Invoke-Vps($Config, [string]$RemoteAction, [switch]$Bootstrap, [switch]
     $request = @{ action=$RemoteAction; device=$Config.DeviceName; clientId=$Config.ClientId }
     if ($CoreOnly) { $request.healthScope='activation' }
     if ($Bootstrap -or $RemoteAction -eq 'configure') {
-        $templateRoot=Property $Config 'RuntimePath' $script:PackageRoot
-        $template=Get-Content -LiteralPath (Join-Path $templateRoot 'resources\tacto-skill.md') -Raw -Encoding UTF8
-        $request.skillText=$template.Replace('{{SERVER}}',('computer-' + $Config.DeviceName)).Replace('{{DEVICE}}',$Config.DeviceName).Replace('{{BROWSER}}',(Property $Config 'BrowserMode' 'isolated'))
+        $request.skillFiles=Get-TargetSkillFiles $Config '{{VPS_CLI}}'
     }
     if ($RemoteAction -eq 'remove') { $request.purge = $true }
     if ($Bootstrap) {
@@ -243,7 +248,8 @@ function Invoke-Vps($Config, [string]$RemoteAction, [switch]$Bootstrap, [switch]
         $request.driverPath = $Config.DriverPath
         $request.reversePort = $Config.ReversePort
     }
-    $payload = [Convert]::ToBase64String($script:Utf8.GetBytes(($request | ConvertTo-Json -Compress)))
+    $payload = 'tacto-stdin-v2'
+    $requestText=$request | ConvertTo-Json -Depth 32 -Compress
     $sshArgs = @('-T','-p',"$($Config.VpsPort)",'-o','ConnectTimeout=15','-o','IdentitiesOnly=yes','-o',"UserKnownHostsFile=$($Config.KnownHostsFile)")
     if ($Bootstrap) {
         if ($Unattended) { $sshArgs += @('-o','BatchMode=yes','-o','StrictHostKeyChecking=yes') }
@@ -258,11 +264,12 @@ function Invoke-Vps($Config, [string]$RemoteAction, [switch]$Bootstrap, [switch]
 
     } else {
         $sshArgs += @('-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-i',$Config.TunnelKey)
-        $command = $payload
+        if ((Property $Config.Remote 'managementVersion' 0) -lt 2 -and $RemoteAction -in @('check','remove')) { $command=[Convert]::ToBase64String($script:Utf8.GetBytes($requestText)) }
+        else { $command = $payload }
     }
     if ($command.Length -gt 29000) { throw 'VPS 初始化命令过长，请更新安装包传输方式。' }
     $sshArgs += @("$($Config.VpsUser)@$($Config.VpsHost)",$command)
-    $nativeResult = Invoke-ProcessResult (Get-SshExe 'ssh.exe') $sshArgs -Interactive:($Bootstrap -and -not $Unattended)
+    $nativeResult = Invoke-ProcessResult (Get-SshExe 'ssh.exe') $sshArgs -Interactive:($Bootstrap -and -not $Unattended) -InputText $requestText
     $response = @($nativeResult.Output -split '\r?\n')
     $code = $nativeResult.Code
     $line = @($response | Where-Object { $_ -like 'TACTO_SETUP_JSON=*' } | Select-Object -Last 1)

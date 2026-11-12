@@ -72,9 +72,19 @@ function Remove-OwnedPath([string]$Relative) {
     }
 }
 function Get-ActiveConnections {
-    $folder = Join-Path $InstallDirectory 'connections'
-    if (-not (Test-Path -LiteralPath $folder)) { return @() }
     $active = @()
+    $cliFolder=Join-Path $InstallDirectory 'cli-sessions'
+    if (Test-Path -LiteralPath $cliFolder) {
+        foreach ($file in Get-ChildItem -LiteralPath $cliFolder -Filter '*.json' -File) {
+            try {
+                $entry=Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ([DateTime]::Parse($entry.expires).ToUniversalTime() -gt [DateTime]::UtcNow) { $active+=$entry; continue }
+            } catch { }
+            Remove-Item -LiteralPath $file.FullName -Force
+        }
+    }
+    $folder = Join-Path $InstallDirectory 'connections'
+    if (-not (Test-Path -LiteralPath $folder)) { return $active }
     foreach ($file in Get-ChildItem -LiteralPath $folder -Filter '*.json' -File) {
         $process=$null; $lease=$null
         try {
@@ -95,13 +105,15 @@ function Get-ActiveConnections {
     return $active
 }
 function Assert-Idle {
-    if (@(Get-ActiveConnections).Count -and -not $Force) { throw 'MCP connections are active. Close the Agent connection, then retry; --force permits an immediate restart.' }
+    if (@(Get-ActiveConnections).Count -and -not $Force) { throw 'MCP connections or CLI sessions are active. Close the connection or call end_session, then retry; --force permits an immediate restart.' }
 }
 function Stop-OwnedConnections {
     foreach ($lease in @(Get-ActiveConnections)) {
+        if ((Property $lease 'kind') -eq 'cli-session') { continue }
         $result=Invoke-ProcessResult "$env:WINDIR\System32\taskkill.exe" @('/PID',[string]$lease.pid,'/T','/F')
         if ($result.Code -ne 0 -and (Get-Process -Id $lease.pid -ErrorAction SilentlyContinue)) { throw 'An active MCP process requires elevated permissions to stop. Retry from an administrator terminal.' }
     }
+    Remove-OwnedPath 'cli-sessions'
 }
 function New-DesktopConfig {
     $defaultDevice = ($env:COMPUTERNAME.ToLower() -replace '[^a-z0-9-]','-')
@@ -135,6 +147,7 @@ function Stage-Runtime($Config) {
     Invoke-Native $compiler @('/nologo','/target:winexe','/platform:x64','/optimize+',('/out:' + (Join-Path $windows 'BackgroundLauncher.exe')),(Join-Path $windows 'BackgroundLauncher.cs'))
     Set-Property $Config 'RuntimePath' $destination
     Set-Property $Config 'TactoVersion' $metadata.version
+    Set-Property $Config 'CliBridgeVersion' 1
 }
 function Register-Uninstaller($Config) {
     $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tacto-' + $Config.ClientId
@@ -238,12 +251,15 @@ function Install-Desktop {
     }
     Assert-Settings $config
     Protect-Directory $InstallDirectory
-    foreach ($path in @('desktop.json','previous.json','.Tacto-temp','keys','logs','connections','skill','mcp-local.json','mcp-vps.json','Invoke-CuaBridge.ps1','sshd_config.before')) { Add-OwnedPath $path }
+    foreach ($path in @('desktop.json','previous.json','.Tacto-temp','keys','logs','connections','cli-sessions','skill','mcp-local.json','mcp-vps.json','Invoke-CuaBridge.ps1','sshd_config.before')) { Add-OwnedPath $path }
     Protect-Directory (Join-Path $InstallDirectory 'keys')
     if (-not $previous) { Save-Config $config }
     if ($IdentityFile) { Set-Property $config 'BootstrapIdentityFile' (Resolve-Path -LiteralPath $IdentityFile).Path }
     elseif (Property $config 'BootstrapIdentityFile') { $script:IdentityFile = $config.BootstrapIdentityFile }
     if ($McpConfig) { Set-Property $config 'McpConfig' ([IO.Path]::GetFullPath($McpConfig)) }
+    if ($NoSkills -and $SkillDirectory) { throw 'Choose -SkillDirectory or -NoSkills.' }
+    if ($NoSkills) { Set-Property $config 'NoSkills' $true }
+    elseif ($SkillDirectory) { Set-Property $config 'NoSkills' $false }
     if ($SkillDirectory) { Set-Property $config 'SkillDirectory' ([IO.Path]::GetFullPath($SkillDirectory)) }
     if ($script:BrowserModeSpecified -or -not (Property $config 'BrowserMode')) { Set-Property $config 'BrowserMode' $BrowserMode }
     if ($AutoUpdate) { Set-Property $config 'AutoUpdate' ($AutoUpdate -eq 'on') }
@@ -261,7 +277,7 @@ function Install-Desktop {
             $known = Join-Path $env:USERPROFILE '.ssh\known_hosts'
             if (Test-Path -LiteralPath $known) { Copy-Item -LiteralPath $known -Destination $config.KnownHostsFile }
         }
-        if (-not $config.Remote -or -not (Property $config.Remote 'managementVersion')) {
+        if (-not $config.Remote -or (Property $config.Remote 'managementVersion' 0) -lt 2) {
             $config.Remote = Invoke-Vps $config 'prepare' -Bootstrap
             $config.ReversePort = $config.Remote.reversePort
             Set-Property $config 'RemoteCleanupComplete' $false
@@ -379,7 +395,7 @@ function Uninstall-Desktop {
         Write-Warning "Local cleanup continues. Remote cleanup receipt: $receipt"
     }
     # Legacy installations have a known, bounded set of owned resources.
-    foreach ($path in @('desktop.json','previous.json','transaction.json','.Tacto-temp','keys','logs','connections','skill','mcp-local.json','mcp-vps.json','Invoke-CuaBridge.ps1','Start-Tunnel.ps1','BackgroundLauncher.cs','BackgroundLauncher.exe','cua.pid','sshd_config.before')) { Add-OwnedPath $path }
+    foreach ($path in @('desktop.json','previous.json','transaction.json','.Tacto-temp','keys','logs','connections','cli-sessions','skill','mcp-local.json','mcp-vps.json','Invoke-CuaBridge.ps1','Start-Tunnel.ps1','BackgroundLauncher.cs','BackgroundLauncher.exe','cua.pid','sshd_config.before')) { Add-OwnedPath $path }
     if ($config.DriverOwned -and $config.DriverPath.StartsWith($InstallDirectory.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
         $driverFolder = $config.DriverPath.Substring($InstallDirectory.Length+1).Split('\')[0]
         if ($driverFolder -match '^cua-[0-9]') { Add-OwnedPath $driverFolder }

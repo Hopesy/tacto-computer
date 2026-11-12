@@ -30,6 +30,22 @@ try {
     $first=Config
     Assert ($first.Phase -eq 'complete') 'Install incomplete'
     Assert ((Get-ScheduledTask -TaskName $first.CuaTask).Principal.RunLevel -eq 'Limited') 'Local task requested elevated execution'
+    $cli=Join-Path $repo 'bin\tacto.mjs'
+    $session='tacto-cli-acceptance'
+    $startJson='{"session":"' + $session + '"}'
+    $startJson | & node $cli driver --install-dir $install call start_session *> (Join-Path $root 'cli-start.json')
+    Assert ($LASTEXITCODE -eq 0) 'CLI start_session failed'
+    $startJson | & node $cli call --install-dir $install get_session *> (Join-Path $root 'cli-session.json')
+    Assert ($LASTEXITCODE -eq 0) 'CLI named session did not survive a second process'
+    Assert (@(Get-ChildItem (Join-Path $install 'cli-sessions') -Filter '*.json').Count -eq 1) 'CLI idle lease missing'
+    Step 'cli-busy-update' @('-Action','Update') -FailureExpected
+    $startJson | & node $cli driver --install-dir $install call end_session *> (Join-Path $root 'cli-end.json')
+    Assert ($LASTEXITCODE -eq 0) 'CLI end_session failed'
+    Assert (@(Get-ChildItem (Join-Path $install 'cli-sessions') -Filter '*.json').Count -eq 0) 'CLI idle lease remains'
+    & node $cli driver --install-dir $install call get_screen_size '{}' *> (Join-Path $root 'cli-screen-size.json')
+    Assert ($LASTEXITCODE -eq 0) 'CLI read-only screen-size call failed'
+    $official=Join-Path $skills ('tacto-' + $device + '\official\WINDOWS.md')
+    Assert ((Get-FileHash $official).Hash -eq (Get-FileHash (Join-Path $repo 'resources\cua-skill\WINDOWS.md')).Hash) 'Official Skill content changed'
     Step 'upgrade' @('-Action','Update')
     $second=Config
     Assert ($first.RuntimePath -ne $second.RuntimePath) 'Upgrade did not stage an independent runtime'

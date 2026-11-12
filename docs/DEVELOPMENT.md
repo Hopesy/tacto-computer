@@ -24,7 +24,7 @@ npm run check
 node bin/tacto.mjs --help
 python tests/test-cli.py
 python tests/test-probe.py
-node --test tests/integration.test.mjs
+node --test tests/*.test.mjs
 ```
 
 ## Windows 安装流程
@@ -36,6 +36,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-lifecycle.ps1 -Te
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-exports.ps1
 python tests/test-bridge.py
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-maintenance.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-skills.ps1
 ```
 
 安装测试为系统功能、计划任务和 VPS 通信提供隔离替身，实际执行密钥生成和后台启动器编译。CLI 转发测试通过进程替身检查安装入口和参数。目标电脑的首次安装与重启验收见 [验证记录](VERIFICATION.md)。
@@ -55,14 +56,14 @@ python3 tests/test-vps.py
 ```sh
 node -e "require('node:fs').mkdirSync('.Tacto-temp',{recursive:true})"
 npm pack --pack-destination .Tacto-temp
-python tests/verify-package.py .Tacto-temp/tacto-mcp-0.2.0.tgz
+python tests/verify-package.py .Tacto-temp/tacto-mcp-0.3.0.tgz
 ```
 
 生成 Windows ZIP：
 
 ```powershell
 ./scripts/Package.ps1
-python tests/verify-package.py .Tacto-temp/packages/Tacto-0.2.0.zip
+python tests/verify-package.py .Tacto-temp/packages/Tacto-0.3.0.zip
 ```
 
 `Package.ps1 -CuaArchive <官方压缩包路径>` 将校验通过的原始 CUA 归档放入 ZIP 的 `vendor/`。打包程序保留源码目录结构；解压后的双击安装入口位于 `install/windows/`。

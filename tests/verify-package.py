@@ -14,7 +14,9 @@ required = ['bin/tacto.mjs', 'src/cli.mjs', 'src/probe.mjs', 'install/windows/Se
             'README.md', 'docs/VERIFICATION.md', 'docs/DEVELOPMENT.md', 'src/integration.mjs',
             'install/windows/Lifecycle.ps1', 'install/windows/McpHealth.ps1',
             'install/windows/AgentIntegration.ps1', 'install/windows/Update-Available.ps1',
-            'resources/tacto-skill.md']
+            'resources/tacto-skill.md', 'src/driver-cli.mjs', 'src/skills.mjs',
+            'resources/cua-skill/SKILL.md', 'resources/cua-skill/WINDOWS.md',
+            'resources/cua-skill/source.json', 'resources/cua-skill/LICENSE']
 if len(sys.argv) > 1:
     archive = Path(sys.argv[1])
     if archive.suffix == '.tgz':

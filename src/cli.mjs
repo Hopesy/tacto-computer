@@ -1,10 +1,11 @@
 import {spawn} from 'node:child_process';
 import {readFile, writeFile, mkdir, stat} from 'node:fs/promises';
 import {hostname, homedir} from 'node:os';
-import {dirname, isAbsolute, join, resolve} from 'node:path';
+import {dirname, isAbsolute, join, resolve, posix} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {childEnvironment} from './process-env.mjs';
 import {connectAgent, disconnectAgent, cleanupRemote} from './integration.mjs';
+import {driverCommand} from './driver-cli.mjs';
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const metadata = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
@@ -14,10 +15,12 @@ const help = `Tacto ${metadata.version} — Computer Use MCP
   tacto-mcp setup --remote --vps-host HOST --vps-user USER [--identity-file PATH]
   tacto-mcp update|rollback|check|uninstall [--install-dir PATH] [--unattended]
   tacto-mcp mcp [--install-dir PATH]
+  tacto-mcp driver call TOOL [JSON] [connection options] [--screenshot-out-file PATH]
+  tacto-mcp driver list-tools|describe TOOL|doctor|status|--version [connection options]
   tacto-mcp mcp --proxy /absolute/path/cua-proxy [--ssh HOST] [--ssh-config PATH]
   tacto-mcp config [connection options] [--output PATH] [--force]
   tacto-mcp probe MCP_CONFIG_JSON [SERVER_NAME] [--health] [--smoke]
-  tacto-mcp connect [connection options] --mcp-config PATH --skill-dir PATH --device-name NAME
+  tacto-mcp connect [connection options] --mcp-config PATH [--skill-dir PATH | --no-skills] --device-name NAME
   tacto-mcp disconnect --mcp-config PATH --device-name NAME
   tacto-mcp cleanup --receipt PATH [--identity-file PATH]
 
@@ -29,9 +32,9 @@ Maintenance: --auto-update on|off (update), --force (update/rollback),
              --keep-config (uninstall).
 Connection options: --install-dir, or --proxy with optional --ssh and --ssh-config.
 `;
-const flags = new Set(['local', 'remote', 'unattended', 'force', 'keep-config']);
+const flags = new Set(['local', 'remote', 'unattended', 'force', 'keep-config', 'no-skills']);
 const values = new Set(['vps-host', 'vps-user', 'vps-port', 'reverse-port', 'local-ssh-port', 'device-name', 'identity-file', 'driver-path', 'install-dir', 'proxy', 'ssh', 'ssh-config', 'output', 'mcp-config', 'skill-dir', 'browser-mode', 'auto-update', 'receipt']);
-const setupOptions = new Set(['local', 'remote', 'unattended', 'vps-host', 'vps-user', 'vps-port', 'reverse-port', 'local-ssh-port', 'device-name', 'identity-file', 'driver-path', 'install-dir', 'mcp-config', 'skill-dir', 'browser-mode', 'auto-update']);
+const setupOptions = new Set(['local', 'remote', 'unattended', 'vps-host', 'vps-user', 'vps-port', 'reverse-port', 'local-ssh-port', 'device-name', 'identity-file', 'driver-path', 'install-dir', 'mcp-config', 'skill-dir', 'browser-mode', 'auto-update', 'no-skills']);
 const connectionOptions = ['install-dir', 'proxy', 'ssh', 'ssh-config'];
 
 function parse(args, allowed) {
@@ -72,7 +75,7 @@ function run(command, args, env = {}) {
   });
 }
 
-async function connection(options) {
+async function connection(options, mode='mcp') {
   if (options.proxy) {
     if (options['install-dir']) throw new Error('Choose one connection: --install-dir or --proxy');
     if (options.ssh) {
@@ -80,12 +83,15 @@ async function connection(options) {
       if (!options.proxy.startsWith('/')) throw new Error('The remote proxy must be an absolute Unix path');
       const args = ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes'];
       if (options['ssh-config']) args.push('-F', await file(options['ssh-config']));
-      const quoted = "'" + options.proxy.replaceAll("'", "'\"'\"'") + "'";
-      return {command: 'ssh', args: [...args, options.ssh, `exec ${quoted}`]};
+      const quote=value=>"'" + value.replaceAll("'", "'\"'\"'") + "'";
+      const remote=mode==='cli' ? `exec ssh -T -F ${quote(posix.join(posix.dirname(options.proxy),'ssh_config'))} windows cua-cli` : `exec ${quote(options.proxy)}`;
+      return {command: 'ssh', args: [...args, options.ssh, remote]};
     }
     if (options['ssh-config']) throw new Error('--ssh-config requires --ssh');
     if (!isAbsolute(options.proxy)) throw new Error('--proxy must be an absolute path');
-    return {command: await file(options.proxy), args: []};
+    const proxy=await file(options.proxy);
+    if (mode==='cli') return {command:'ssh',args:['-T','-F',await file(join(dirname(proxy),'ssh_config')),'windows','cua-cli']};
+    return {command: proxy, args: []};
   }
   if (options.ssh || options['ssh-config']) throw new Error('SSH connections require --proxy');
   if (process.platform !== 'win32') throw new Error('On an Agent host, connect with --proxy /path/to/cua-proxy and optionally --ssh HOST');
@@ -99,8 +105,9 @@ async function connection(options) {
   if (config.Phase !== 'complete') throw new Error('Complete or repair the installation with: npx -y tacto-mcp update');
   if (typeof config.SocketPath !== 'string' || !config.SocketPath.startsWith('\\\\.\\pipe\\')) throw new Error('The installation has an invalid CUA pipe');
   if (typeof config.DriverPath !== 'string' || !isAbsolute(config.DriverPath)) throw new Error('The installation has an invalid CUA executable path');
+  if (mode==='cli' && (!config.RuntimePath || config.CliBridgeVersion !== 1)) throw new Error('Update the controlled PC to enable the Tacto CLI bridge');
   if (config.RuntimePath) {
-    return {command: join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', await file(join(installDirectory(options), 'Invoke-CuaBridge.ps1')), '-ConfigPath', path, '-Local']};
+    return {command: join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', await file(join(installDirectory(options), 'Invoke-CuaBridge.ps1')), '-ConfigPath', path, '-Local',...(mode==='cli'?['-Cli']:[])]};
   }
   return {command: await file(config.DriverPath), args: ['mcp', '--socket', config.SocketPath]};
 }
@@ -114,6 +121,7 @@ async function setup(command, options) {
   if (options.unattended) args.push('-Unattended');
   if (options['keep-config']) args.push('-KeepConfig');
   if (options.force) args.push('-Force');
+  if (options['no-skills']) args.push('-NoSkills');
   const mapping = {'vps-host': 'VpsHost', 'vps-user': 'VpsUser', 'vps-port': 'VpsPort', 'reverse-port': 'ReversePort', 'local-ssh-port': 'LocalSshPort', 'device-name': 'DeviceName', 'identity-file': 'IdentityFile', 'driver-path': 'DriverPath', 'mcp-config': 'McpConfig', 'skill-dir': 'SkillDirectory', 'browser-mode': 'BrowserMode', 'auto-update': 'AutoUpdate'};
   for (const [name, parameter] of Object.entries(mapping)) {
     if (options[name] === undefined) continue;
@@ -135,16 +143,18 @@ async function main() {
   if (args.includes('--help') || args[0] === 'help') { console.log(help); return 0; }
   if (args[0] === '--version' || args[0] === 'version') { console.log(metadata.version); return 0; }
   const command = args[0] && !args[0].startsWith('--') ? args.shift() : 'mcp';
+  if (command==='driver') return driverCommand(args,connection);
+  if (command==='call') return driverCommand(['call',...args],connection);
   if (command === 'probe') {
     if (args.length < 1 || args.length > 4) throw new Error('Usage: tacto-mcp probe MCP_CONFIG_JSON [SERVER_NAME]');
     return run(process.execPath, [join(packageRoot, 'src', 'probe.mjs'), await file(args[0]), ...args.slice(1)]);
   }
   if (['setup', 'update', 'rollback', 'check', 'uninstall'].includes(command)) {
-    const allowed = command === 'setup' ? setupOptions : new Set(['install-dir', 'unattended', ...(command === 'update' ? ['identity-file', 'driver-path', 'auto-update', 'mcp-config', 'skill-dir', 'browser-mode', 'force'] : []), ...(command === 'uninstall' ? ['keep-config'] : []), ...(command === 'rollback' ? ['force'] : [])]);
+    const allowed = command === 'setup' ? setupOptions : new Set(['install-dir', 'unattended', ...(command === 'update' ? ['identity-file', 'driver-path', 'auto-update', 'mcp-config', 'skill-dir', 'browser-mode', 'no-skills', 'force'] : []), ...(command === 'uninstall' ? ['keep-config'] : []), ...(command === 'rollback' ? ['force'] : [])]);
     return setup(command, parse(args, allowed));
   }
   if (command === 'connect') {
-    const options = parse(args, new Set([...connectionOptions, 'mcp-config', 'skill-dir', 'device-name', 'browser-mode']));
+    const options = parse(args, new Set([...connectionOptions, 'mcp-config', 'skill-dir', 'device-name', 'browser-mode', 'no-skills']));
     console.log(JSON.stringify(await connectAgent(options, await connection(options), packageRoot), null, 2));
     return 0;
   }

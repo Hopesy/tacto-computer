@@ -99,9 +99,9 @@ def prepare(request, root, folder, auth):
         write(folder / 'setup-vps.py', source, 0o700)
     state = dict(device=request['device'], clientId=request['clientId'], reversePort=port,
                  windowsKey=callback_key, driverPath=driver, vpsUser=run(['id', '-un']),
-                 mcpName='computer-' + request['device'], managementVersion=1)
-    if request.get('skillText'):
-        write(folder / 'skill' / 'SKILL.md', request['skillText'])
+                 mcpName='computer-' + request['device'], managementVersion=2)
+    if request.get('skillText') or request.get('skillFiles'):
+        install_skill(folder, skill_files(request, folder))
     control = 'python3 %s --managed' % shlex.quote(str(folder / 'setup-vps.py'))
     edit_authorized(auth, 'tacto:' + request['device'] + ':tunnel',
                     'restrict,port-forwarding,permitlisten="127.0.0.1:%d",command="%s" %s' % (
@@ -187,6 +187,51 @@ def check(state, folder, core_only=False):
     return {'connected': True, 'status': 'Windows MCP health verified', 'health': health}
 
 
+def skill_files(request, folder):
+    files = request.get('skillFiles', {'SKILL.md': request.get('skillText')})
+    if not isinstance(files, dict) or 'SKILL.md' not in files or len(files) > 64:
+        raise ValueError('Expected a bounded target Skill pack.')
+    if sum(len(value.encode('utf-8')) for value in files.values() if isinstance(value, str)) > 2 * 1024 * 1024:
+        raise ValueError('Skill pack exceeds 2 MiB.')
+    for name, value in files.items():
+        if not re.fullmatch(r'SKILL\.md|official/[A-Za-z0-9_.-]+', name) or not isinstance(value, str):
+            raise ValueError('Invalid Skill file.')
+    prefix = 'npx -y tacto-mcp@latest driver --proxy ' + shlex.quote(str(folder / 'cua-proxy'))
+    return {name: value.replace('{{VPS_CLI}}', prefix) if name == 'SKILL.md' else value for name, value in files.items()}
+
+
+def install_skill(folder, files):
+    manifest = folder / 'skill-manifest.json'
+    previous = json.loads(manifest.read_text()) if manifest.exists() else ['SKILL.md']
+    for name in previous:
+        if not re.fullmatch(r'SKILL\.md|official/[A-Za-z0-9_.-]+', name):
+            raise ValueError('Invalid Skill manifest path.')
+    for name, value in files.items():
+        write(folder / 'skill' / name, value)
+    for name in set(previous) - set(files):
+        (folder / 'skill' / name).unlink(missing_ok=True)
+    write(manifest, json.dumps(list(files)))
+
+
+def integration_files(record, device):
+    files = record.get('files')
+    if files is None:
+        files = [dict(path=record['skill'], hash=record['skillHash'], root=str(Path(record['skill']).parent))] if record.get('skill') else []
+    for file in files:
+        root, path = Path(file['root']), Path(file['path'])
+        name = path.relative_to(root).as_posix()
+        if root.name != 'tacto-' + device or not re.fullmatch(r'SKILL\.md|official/[A-Za-z0-9_.-]+', name):
+            raise ValueError('Invalid integration path.')
+    return files
+
+
+def prune_skill(files):
+    directories = {Path(file['root']) for file in files} | {Path(file['path']).parent for file in files}
+    for directory in sorted(directories, key=lambda path: len(path.parts), reverse=True):
+        if directory.is_dir() and not any(directory.iterdir()):
+            directory.rmdir()
+
+
 def reconcile_integrations(folder, state, replacement_skill=None):
     registry = folder / 'agent-integrations.json'
     preserved = []
@@ -200,16 +245,34 @@ def reconcile_integrations(folder, state, replacement_skill=None):
         return ['Agent registrations were unreadable; check the client configurations manually.']
     for registration in registrations:
         receipt = None
+        originals = {}
         try:
             receipt = Path(registration['receipt'])
             if registration.get('clientId') != state['clientId'] or not receipt.is_file():
                 continue
             record = json.loads(receipt.read_text())
-            config, skill = Path(record['config']), Path(record['skill'])
+            config = Path(record['config'])
             expected_receipt = str(config) + '.tacto-' + state['device'] + '.json'
             if str(receipt) != expected_receipt or record['name'] != state['mcpName'] or record['server'] != state['mcp']:
                 raise ValueError('Integration identity mismatch')
-            edited = False
+            files = integration_files(record, state['device'])
+            desired = []
+            if replacement_skill is not None:
+                for root in {file['root'] for file in files}:
+                    desired.extend(dict(root=root, path=str(Path(root) / name), hash=hashlib.sha256(text.encode('utf-8')).hexdigest(), text=text) for name, text in replacement_skill.items())
+            old = {file['path']: file for file in files}
+            conflicts = []
+            for file in files + desired:
+                path = Path(file['path'])
+                if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() != old.get(str(path), {}).get('hash'):
+                    conflicts.append(str(path))
+            if replacement_skill is not None and conflicts:
+                preserved.extend(sorted(set(conflicts)))
+                continue
+            edited = bool(conflicts)
+            for path in [config, receipt] + [Path(file['path']) for file in files + desired]:
+                if path not in originals:
+                    originals[path] = path.read_bytes() if path.exists() else None
             if config.exists():
                 document = json.loads(config.read_text(encoding='utf-8-sig'))
                 entry = document.get('mcpServers', {}).get(record['name'])
@@ -218,21 +281,29 @@ def reconcile_integrations(folder, state, replacement_skill=None):
                     write(config, json.dumps(document, indent=2) + '\n')
                 elif entry is not None and entry != record['server']:
                     preserved.append(str(config)); edited = True
-            if skill.exists():
-                if skill.name == 'SKILL.md' and skill.parent.name == 'tacto-' + state['device'] and hashlib.sha256(skill.read_bytes()).hexdigest() == record['skillHash']:
-                    if replacement_skill is None:
-                        skill.unlink()
-                        if not any(skill.parent.iterdir()):
-                            skill.parent.rmdir()
-                    else:
-                        write(skill, replacement_skill)
-                        record['skillHash'] = hashlib.sha256(replacement_skill.encode('utf-8')).hexdigest()
-                        write(receipt, json.dumps(record, indent=2) + '\n')
-                else:
-                    preserved.append(str(skill)); edited = True
-            if not edited and replacement_skill is None:
-                receipt.unlink()
+            desired_paths = {file['path'] for file in desired}
+            for file in files:
+                path = Path(file['path'])
+                if path.exists() and str(path) not in desired_paths and str(path) not in conflicts:
+                    path.unlink()
+            preserved.extend(sorted(set(conflicts)))
+            for file in desired:
+                write(Path(file['path']), file['text'])
+            prune_skill(files)
+            if replacement_skill is None:
+                if not edited:
+                    receipt.unlink()
+            else:
+                record['schema'] = 2
+                record['files'] = [{key: value for key, value in file.items() if key != 'text'} for file in desired]
+                record['skillHash'] = hashlib.sha256(replacement_skill['SKILL.md'].encode('utf-8')).hexdigest() if record.get('skill') else None
+                write(receipt, json.dumps(record, indent=2) + '\n')
         except (OSError, ValueError, KeyError, TypeError):
+            for path, original in originals.items():
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    write(path, original.decode('utf-8'))
             preserved.append(str(receipt) if receipt else 'Invalid Agent registration; check client configurations manually.')
     return preserved
 
@@ -260,11 +331,9 @@ def execute(request, home=None):
         if request['action'] == 'check':
             return check(state, folder, core_only=request.get('healthScope') == 'activation')
         if request['action'] == 'configure':
-            skill = request.get('skillText')
-            if not isinstance(skill, str) or len(skill) > 20000:
-                raise ValueError('Expected a bounded target Skill.')
-            write(folder / 'skill' / 'SKILL.md', skill)
-            preserved = reconcile_integrations(folder, state, replacement_skill=skill)
+            files = skill_files(request, folder)
+            install_skill(folder, files)
+            preserved = reconcile_integrations(folder, state, replacement_skill=files)
             return {'configured': True, 'preservedIntegrations': preserved}
         if request['action'] == 'remove':
             preserved = reconcile_integrations(folder, state)
@@ -283,7 +352,13 @@ if __name__ == '__main__':
     try:
         managed = sys.argv[1] == '--managed'
         encoded = os.environ.get('SSH_ORIGINAL_COMMAND', '') if managed else sys.argv[1]
-        request = json.loads(base64.b64decode(encoded, validate=True))
+        if encoded == 'tacto-stdin-v2':
+            raw = sys.stdin.buffer.read(3 * 1024 * 1024 + 1)
+            if len(raw) > 3 * 1024 * 1024:
+                raise ValueError('Management request exceeds 3 MiB.')
+            request = json.loads(raw)
+        else:
+            request = json.loads(base64.b64decode(encoded, validate=True))
         if managed and (request['device'] != Path(__file__).parent.name or request['action'] not in ('check', 'remove', 'configure')):
             raise ValueError('Unsupported managed request.')
         result = execute(request)

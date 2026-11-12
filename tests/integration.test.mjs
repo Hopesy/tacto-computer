@@ -5,6 +5,7 @@ import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {connectAgent, disconnectAgent, cleanupRemote} from '../src/integration.mjs';
 import {gunzipSync} from 'node:zlib';
+import {detectSkillDirectories, skillFiles, hash} from '../src/skills.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 await mkdir(join(root, '.Tacto-temp'), {recursive: true});
@@ -80,8 +81,43 @@ test('VPS-local integration records cleanup ownership for its device', async () 
   await mkdir(device, {recursive: true});
   const proxy = join(device, 'cua-proxy');
   const direct = {command: proxy, args: []};
-  await writeFile(join(device, 'state.json'), JSON.stringify({clientId: 'owned-id', device: 'office', mcp: direct}));
+  await writeFile(join(device, 'state.json'), JSON.stringify({managementVersion:2, clientId: 'owned-id', device: 'office', mcp: direct}));
   const result = await connectAgent({...options, proxy}, direct, root);
   assert.equal(result.deviceCleanupRegistered, true);
   assert.deepEqual(JSON.parse(await readFile(join(device, 'agent-integrations.json'))), [{clientId:'owned-id', receipt:result.receipt}]);
+});
+test('official references retain upstream hashes and edited references survive cleanup',async()=>{
+  const {options}=await fixture();
+  const result=await connectAgent(options,server,root);
+  const folder=dirname(result.skill);
+  const manifest=JSON.parse(await readFile(join(root,'resources/cua-skill/source.json')));
+  for(const [name,digest] of Object.entries(manifest.files)) assert.equal(hash(await readFile(join(folder,'official',name))),digest);
+  const changed=join(folder,'official','WINDOWS.md');
+  await writeFile(changed,'user extension');
+  await assert.rejects(connectAgent(options,server,root),/edited/);
+  assert.deepEqual((await disconnectAgent(options)).preserved,[changed]);
+  assert.equal(await readFile(changed,'utf8'),'user extension');
+  await assert.rejects(access(join(folder,'official','RUNTIME.md')),{code:'ENOENT'});
+});
+test('MCP-only connection and supported Skill directory detection',async()=>{
+  const {folder,options}=await fixture();
+  const result=await connectAgent({...options,'skill-dir':undefined,'no-skills':true},server,root);
+  assert.equal(result.skill,null);
+  assert.deepEqual((await disconnectAgent(options)).preserved,[]);
+  await mkdir(join(folder,'.codex'));
+  await mkdir(join(folder,'.cursor'));
+  await mkdir(join(folder,'.claude'));
+  assert.deepEqual((await detectSkillDirectories(folder,{})).sort(),[join(folder,'.agents','skills'),join(folder,'.claude','skills')].sort());
+});
+test('legacy one-file receipt migrates to official pack and CLI binds the selected target',async()=>{
+  const {options}=await fixture();
+  const skill=join(options['skill-dir'],'tacto-office','SKILL.md');
+  await mkdir(dirname(skill),{recursive:true}); await writeFile(skill,'old managed skill');
+  const receipt=options['mcp-config']+'.tacto-office.json';
+  await writeFile(receipt,JSON.stringify({schema:1,config:options['mcp-config'],name:'computer-office',server,skill,skillHash:hash('old managed skill')}));
+  const result=await connectAgent({...options,proxy:"/home/agent's files/cua-proxy",ssh:'my-vps'},server,root);
+  assert.match(await readFile(result.skill,'utf8'),/--ssh 'my-vps'/);
+  assert.equal(JSON.parse(await readFile(receipt)).files.length,14);
+  await disconnectAgent(options);
+  await assert.rejects(access(dirname(skill)),{code:'ENOENT'});
 });

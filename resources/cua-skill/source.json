@@ -1,0 +1,18 @@
+{
+  "version": "0.46.1",
+  "source": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.46.1/cua-driver-rs-v0.46.1-skills.tar.gz",
+  "sha256": "dfdbff1351035143a503c337b7fb06b4b3d8a1bea5841417a651825b14ccaaf4",
+  "files": {
+    "RECORDING.md": "efe2e955396122e317afa5d309e6b45d8079a5c1a2081a996dcdd7977cd78e99",
+    "MACOS.md": "378d6d9ef9543389f98885130b6664c1757654d418eefdfe30872268c09647f0",
+    "SKILL.md": "cc206d303d2b10d801c0b7c6b1a9ae1b0736b9456cef0ef8dcb1801b99a6b859",
+    "WINDOWS.md": "5f34a974d2463e371a1c78133dcae330fa59e27b31af3bf1896348cadcc2995b",
+    "README.md": "7b561c189ec2f2c38eed3bc7981935ba45c0a3ae03db4788565e3528efc19e3b",
+    "RUNTIME.md": "fefc8d106e21ecea13e56512674bd15f97e53525187a9981ece645d385e6b8b1",
+    "EMBEDDING.md": "0a7098ecc445d25a6173f79b41042814a9aca9011d1ed1391f2c8e4978c52df0",
+    "BROWSER.md": "0f248305d83d4dd89236769867f194e4fe08d2a4ca38852079b2cb693765a9a8",
+    "LINUX.md": "5ca490ed3e2cd5ac024808c7162fba078eecd669809943c4a42c40eaa603d52e",
+    "WORKFLOW.md": "2cc65d67634cd9a1c2ccd8e0dc7f30d394569173e1ca437a8fe693fb9f941269",
+    "VISUAL.md": "66aa0fadd643ee4cd0deda751af1f3ebc2cec0b77607eec61c9b2a4ee7d4a256"
+  }
+}

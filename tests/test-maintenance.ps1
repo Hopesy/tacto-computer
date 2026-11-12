@@ -1,4 +1,4 @@
-$ErrorActionPreference='Stop'
+﻿$ErrorActionPreference='Stop'
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $fixture=Join-Path $repo ('.Tacto-temp\maintenance-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force $fixture | Out-Null

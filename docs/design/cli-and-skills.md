@@ -1,0 +1,15 @@
+# CLI and official Skills
+
+Status: accepted, 2026-11-12. The user requested both CLI and MCP access, with reusable official guidance and unobtrusive lifecycle management.
+
+The Node `driver` command sends a bounded JSON request to the Windows bridge. Locally it uses PowerShell stdin; remotely it uses the VPS device's existing `ssh_config` and the restricted `cua-cli` callback. The bridge validates the command/tool and invokes the native Driver CLI against the installation's pipe. Tool arguments travel through UTF-8 stdin; shell strings contain only quoted connection paths. `call` is a convenience alias. Supported commands are call, list-tools, describe, status, doctor and version.
+
+Native named CLI sessions use the same daemon namespace across processes. Each successful call with a non-default session refreshes a five-minute maintenance lease; end_session removes it. Running processes retain the existing connection lease, covering the handover to the idle lease. Normal maintenance respects both types. Forced maintenance removes the leases and restarts the owned daemon. MCP retains its persistent transport scope. Screenshots use the native CLI's screenshot_png_b64 result and are saved on the invoking Agent host with existing-file protection.
+
+The official 0.46.1 Skill release archive has SHA256 dfdbff1351035143a503c337b7fb06b4b3d8a1bea5841417a651825b14ccaaf4. `resources/cua-skill/source.json` records the release URL and file hashes; its MIT license accompanies the unchanged files. The upstream metadata is preserved verbatim. A small Tacto adapter binds the selected Windows device, CLI prefix, MCP name and browser preference. It routes to official instructions on demand.
+
+Skill installation is optional. Fresh installs detect existing supported Agent directories; explicit paths and --no-skills override discovery. Existing integrations retain their registered directories. Each device owns its adapter and official files, tracked by per-file hashes. Legacy single-file receipts migrate on update. Conflicting edits block overwrite; disconnect/uninstall removes unchanged owned files and preserves edits. Local Windows lifecycle transactions restore the previous runtime's files. VPS-local registered copies follow remote configure/rollback; other Agent hosts refresh through connect.
+
+VPS management protocol 2 carries the full pack as bounded JSON on SSH stdin, avoiding Windows command-line length limits. Upgrading a version-1 helper uses the saved original VPS login once. The upgraded helper accepts legacy base64 command framing as well as the new stdin framing, so previous runtimes can still check and remove their device. Each client update snapshots affected files and restores them after a write failure.
+
+Sources: [CUA agent connection guide](https://cua.ai/docs/cua-driver/guides/connect-your-agent), [CUA Skill release](https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.46.1). Tests and native acceptance results are recorded in the release history.

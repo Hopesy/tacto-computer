@@ -33,7 +33,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python tests/test-probe.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          node --test tests/integration.test.mjs
+          node --test tests/*.test.mjs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python tests/test-bridge.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -48,6 +48,8 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-exports.ps1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-maintenance.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-skills.ps1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Validate distributable packages
         run: |
@@ -75,5 +77,5 @@ jobs:
           npm run check
           python tests/test-cli.py
           python tests/test-probe.py
-          node --test tests/integration.test.mjs
+          node --test tests/*.test.mjs
           python tests/test-vps.py

@@ -1,10 +1,10 @@
 # Tacto
 
-**通用 Computer Use MCP，让 Agent 操作本地或远端 Windows 电脑。**
+**通用 Computer Use CLI + MCP，让 Agent 操作本地或远端 Windows 电脑。**
 
-Tacto 负责 CUA Driver、SSH 隧道、后台启动、升级恢复和卸载。Agent 通过标准 MCP stdio 调用工具，使用自己的模型判断；随连接提供的设备 Skill 介绍目标电脑和操作方法。
+Tacto 负责 CUA Driver、SSH 隧道、后台启动、升级恢复和卸载。Agent 可以通过 CLI 命令或标准 MCP stdio 调用工具；两条入口使用同一个 CUA Driver。随安装提供官方 CUA Skill 和设备适配说明。
 
-当前版本 **0.2.0**。安装入口统一使用 npm/命令行。受控电脑需要 Windows 10/11 x64；npm CLI 需要 Node.js 22+。Agent 可以运行在 Windows、Linux VPS、容器或其他支持 MCP 的环境。远端 VPS 需要 Python 3 和 OpenSSH。
+当前版本 **0.3.0**。安装入口统一使用 npm/命令行。受控电脑需要 Windows 10/11 x64；npm CLI 需要 Node.js 22+。Agent 可以运行在 Windows、Linux VPS、容器或其他支持命令行或 MCP 的环境。远端 VPS 需要 Python 3 和 OpenSSH。
 
 ## 一条命令安装
 
@@ -16,7 +16,9 @@ npx.cmd -y tacto-mcp@latest setup --local --unattended
 
 安装器自动下载固定版本 CUA，验证 SHA256 与 Cua AI 签名，建立独立管道和普通用户登录任务，验证实际 MCP 连接。本机新安装使用当前用户权限；后台 CUA 与隧道通过已有的隐藏启动器运行。
 
-提供客户端的 JSON 配置和 Skill 目录，可同时完成接入：
+安装时自动发现已有的 Claude、Codex、Cursor、Pi、Factory、OpenClaw、OpenCode 配置目录，将设备 Skill 安装到对应位置。也可用 `--skill-dir` 指定目录，或用 `--no-skills` 跳过。MCP 和 CLI 都可独立使用。
+
+提供客户端的 JSON 配置，可同时完成 MCP 接入；Skill 目录可按需指定：
 
 ```powershell
 npx.cmd -y tacto-mcp@latest setup --local --unattended --mcp-config "C:\path\to\mcp.json" --skill-dir "C:\path\to\skills"
@@ -39,6 +41,31 @@ npx.cmd -y tacto-mcp@latest setup --local --unattended --mcp-config "C:\path\to\
 
 `tacto-mcp config` 可导出直接指向已安装桥接脚本的配置，后续 MCP 启动可直接使用该入口。脚本读取当前生效版本，升级后连接地址保持稳定。
 
+## 直接使用 CLI
+
+有终端执行能力的 Agent 可以直接调用：
+
+```powershell
+npx.cmd -y tacto-mcp@latest driver list-tools
+npx.cmd -y tacto-mcp@latest driver describe get_screen_size
+npx.cmd -y tacto-mcp@latest driver call get_screen_size '{}'
+```
+
+多步任务使用命名会话，后续工具调用重复传入 `session`：
+
+```powershell
+'{"session":"my-task"}' | npx.cmd -y tacto-mcp@latest driver call start_session
+'{"session":"my-task"}' | npx.cmd -y tacto-mcp@latest driver call get_session
+# 按实时工具 schema 继续操作，完成后释放会话
+'{"session":"my-task"}' | npx.cmd -y tacto-mcp@latest driver call end_session
+```
+
+`call TOOL` 也可直接写为 `tacto-mcp call TOOL`。参数支持 JSON 字符串或 UTF-8 标准输入；中文等内容通过管道传递时，PowerShell 5.1 先设置 `$OutputEncoding = [Text.UTF8Encoding]::new($false)`。`--install-dir` 选择安装目录。
+
+CLI 命名会话在同一后台 Driver 中跨命令保留，空闲五分钟过期；省略会话名的命令使用临时会话。MCP 通过持续连接维护会话。每次切换入口或后台重启后重新观察目标。需要持续连接的录制工具可走 MCP。
+
+`driver status`、`driver doctor`、`driver --version` 检查受控电脑。返回图像的工具可附加 `--screenshot-out-file <新文件路径>`，图像保存在运行 CLI 的机器上。
+
 ## 通过 VPS 接入
 
 在 Windows 上填写自己的 VPS 信息：
@@ -55,7 +82,15 @@ npx.cmd -y tacto-mcp@latest setup --remote --vps-host vps.example.com --vps-user
 npx -y tacto-mcp@latest connect --proxy "$HOME/.tacto/devices/office-pc/cua-proxy" --device-name office-pc --mcp-config /path/to/mcp.json --skill-dir /path/to/skills
 ```
 
-`connect` 支持使用 `mcpServers` 的 JSON 配置。其他格式可使用 `config` 导出的命令和参数，由 Agent 按客户端格式合并。Agent 位于另一台主机时，增加 `--ssh <已配置的SSH别名>`，`--proxy` 填 VPS 上的绝对路径；可同时指定 `--ssh-config`。
+`connect` 支持使用 `mcpServers` 的 JSON 配置；`--skill-dir` 可省略以自动发现，`--no-skills` 仅配置 MCP。其他格式可使用 `config` 导出的命令和参数，由 Agent 按客户端格式合并。Agent 位于另一台主机时，增加 `--ssh <已配置的SSH别名>`，`--proxy` 填 VPS 上的绝对路径；可同时指定 `--ssh-config`。
+
+同一套连接参数也用于 CLI。在 VPS 上：
+
+```sh
+npx -y tacto-mcp@latest driver --proxy "$HOME/.tacto/devices/office-pc/cua-proxy" call get_screen_size '{}'
+```
+
+Agent 位于另一台机器时，CLI 同样增加 `--ssh <别名>` 和可选的 `--ssh-config`。请求经 VPS 隧道抵达受控 Windows 的原生 CUA CLI，会话在 Windows 后台进程中保持。
 
 ## 更新、回滚与卸载
 
@@ -71,7 +106,7 @@ npx.cmd -y tacto-mcp@latest uninstall --unattended
 ```
 
 - **更新**：先准备并校验新版，再切换服务；连接与健康验收失败时恢复旧版。设备名、管道、VPS 信息和密钥沿用原值。中途被终止后，下次维护命令会根据事务记录恢复。
-- **连接保护**：通过 Tacto 桥接入口建立的 MCP 连接存续期间，普通更新会提示关闭连接后重试；`--force` 允许立即重启。Agent 完成任务后应释放连接。
+- **连接保护**：通过 Tacto 桥接入口建立的 MCP 连接或 CLI 命名会话存续期间，普通更新会提示释放连接/会话后重试；`--force` 允许立即重启。Agent 完成任务后应释放连接，CLI 调用 `end_session`。
 - **完整卸载**：停止本安装的连接和任务，撤销 Windows/VPS 专用授权，删除自有运行文件、下载缓存、密钥和日志，清理登记过且未被用户修改的 MCP 配置与 Skill。其他安装、外部指定的 Driver 和无关文件保留。
 - **保留设置**：`uninstall --keep-config --unattended` 保留连接配置、密钥和日志，方便重新安装。
 - **离线卸载**：VPS 离线时继续本机清理，输出 `%LOCALAPPDATA%\Tacto-cleanup\<安装ID>.json`。联网后，使用 VPS 原有登录身份执行 `tacto-mcp cleanup --receipt <文件> --identity-file <密钥>`，完成远端清理。
@@ -87,7 +122,9 @@ npx.cmd -y tacto-mcp@latest update --unattended --auto-update on
 npx.cmd -y tacto-mcp@latest update --unattended --auto-update off
 ```
 
-启用后每天在已登录的用户会话中检查 GitHub 正式发行版；已有 MCP 连接时跳过。更新先验证发布包和逐文件摘要，失败保留恢复记录。结果位于安装目录的 `.Tacto-temp/updates/last-update.json`。默认关闭自动更新。
+启用后每天在已登录的用户会话中检查 GitHub 正式发行版；已有 MCP 连接或活跃 CLI 会话时跳过。更新先验证发布包和逐文件摘要，失败保留恢复记录。结果位于安装目录的 `.Tacto-temp/updates/last-update.json`。默认关闭自动更新。
+
+从 **0.2.x** 升级远端安装时，VPS 管理脚本需通过原有 SSH 登录身份更新一次，以支持完整 Skill 包传输；后续维护复用受限管理密钥。
 
 从 **0.1.x** 迁移时，旧管理员任务需要一次权限迁移；远端旧管理脚本还需要一次原始 VPS 登录。迁移成功后的普通更新使用现有受限管理连接。旧版手动配置的直接 Driver 入口，建议改用新导出的桥接入口，以启用连接保护。
 
@@ -102,25 +139,21 @@ npx.cmd -y tacto-mcp@latest probe "$env:LOCALAPPDATA\Tacto\mcp-local.json" --hea
 
 安装和升级使用启动所需的健康检查，显式 `check`/`probe --health` 获取完整能力报告。按官方语义，核心检查失败触发故障；`degraded` 会保留失败能力和修复提示。Windows 第三方 UIA provider 的超时会如实显示。电脑需保持开机、联网并登录桌面；后台任务在登录时恢复。
 
-设备 Skill 会：
+设备 Skill 包含固定 CUA **0.46.1** 发布包中的官方文件、来源摘要和 MIT 许可。Tacto 的简短适配说明绑定目标电脑、CLI 前缀、MCP 名称与 Windows 平台；官方工作流、浏览器、会话和录制指引按需读取。
 
-- 绑定具体 MCP 服务和目标 Windows 平台，在 Linux Agent 上也读取 Windows 指引。
-- 通过 `get_guide` 获取与实际 Driver 配套的说明，按实时工具 schema 选择参数。
-- 使用 `run_steps`、`run_script` 和增量观察减少往返，在关键节点验证结果。
-- 在断线后重建会话和目标，先确认上一步结果再继续。
-- 明确浏览器 profile 选择，按需使用诊断录制和已发现的预览能力。`--browser-mode isolated|existing` 设置偏好，默认 `isolated`。
+安装器按文件记录来源和摘要，升级、回滚和卸载覆盖整套 Skill。用户编辑过的文件会保留并报告。其他 Agent 主机上的副本通过再次 `connect` 更新。`--browser-mode isolated|existing` 设置浏览器偏好，默认 `isolated`。
 
 ## 交给 Agent 自动安装的提示词
 
 ### 本机
 
 ```text
-请安装并配置 Tacto，让你通过 MCP 操作这台 Windows 电脑。
+请安装并配置 Tacto，让你通过 CLI 或 MCP 操作这台 Windows 电脑。
 仓库：https://github.com/Hopesy/tacto-mcp
 
-先阅读 README，检查 Windows x64、Node.js 22+ 和当前登录用户。找到你使用的 MCP 配置与 Skill 目录，保留已有内容。
-使用 npx.cmd -y tacto-mcp@latest setup --local --unattended；JSON 客户端可加 --mcp-config 和 --skill-dir 完成合并。其他格式按 config 导出的标准 stdio 参数合并，并安装生成的设备 Skill。
-然后运行 check，并从实际 Agent 环境执行 probe --health --smoke，报告健康状态、工具数量和配置位置。
+先阅读 README，检查 Windows x64、Node.js 22+ 和当前登录用户。根据你的工具能力选择 CLI 或 MCP；检查已有客户端设置并保留内容。
+使用 npx.cmd -y tacto-mcp@latest setup --local --unattended；JSON 客户端可加 --mcp-config 完成合并。Skill 自动发现已有客户端目录，也可加 --skill-dir 指定或 --no-skills 跳过。其他格式按 config 导出的标准 stdio 参数合并。
+然后运行 check；CLI 验证 driver call get_screen_size，并测试命名会话跨命令保持及 end_session；MCP 验证 probe --health --smoke。报告实际使用入口、健康状态和配置位置。
 后续升级、卸载也使用 tacto-mcp@latest。遇到能力降级时报告具体检查与提示。
 
 我授权安装 Tacto、官方 CUA Driver、后台登录任务及对应 MCP/Skill 配置。过程文件放在 .Tacto-temp 目录。
@@ -135,7 +168,7 @@ npx.cmd -y tacto-mcp@latest probe "$env:LOCALAPPDATA\Tacto\mcp-local.json" --hea
 连接信息：VPS [主机名或IPv4]，SSH 用户 [用户名]，端口 [22]，电脑名称 [office-pc]，SSH 登录密钥 [路径；或交互式登录]。
 先阅读 README，检查 Windows x64、Node.js 22+、VPS Python 3 和 OpenSSH。
 在 Windows 使用 npx.cmd -y tacto-mcp@latest setup --remote，填入上述连接参数；已有密钥和主机信任时加 --unattended。
-在 Agent 环境通过 connect 配置对应设备 MCP 和 Skill；若使用其他格式的配置，按标准 stdio 参数合并。保留已有客户端设置。
+在 Agent 环境选择 CLI --proxy 或通过 connect 配置对应设备 MCP；Skill 自动发现，也可指定目录。若使用其他格式的配置，按标准 stdio 参数合并。保留已有客户端设置。
 沿实际 VPS→Windows 路径完成 MCP 握手、工具发现、health_report 和 get_screen_size，并汇报结果。
 
 我授权上述安装、专用 SSH 授权、后台登录任务和对应 MCP/Skill 配置。Windows 授权或 SSH 登录验证由我完成后继续。临时文件放在 .Tacto-temp，凭据保留在 SSH 配置中。
