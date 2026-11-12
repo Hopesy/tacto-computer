@@ -11,7 +11,10 @@ root = Path(__file__).resolve().parents[1]
 metadata = json.loads((root / 'package.json').read_text())
 required = ['bin/tacto.mjs', 'src/cli.mjs', 'src/probe.mjs', 'install/windows/Setup-Tacto.ps1',
             'install/linux/setup-vps.py', 'resources/cua-release.json', 'scripts/Package.ps1',
-            'README.md', 'docs/VERIFICATION.md', 'docs/DEVELOPMENT.md']
+            'README.md', 'docs/VERIFICATION.md', 'docs/DEVELOPMENT.md', 'src/integration.mjs',
+            'install/windows/Lifecycle.ps1', 'install/windows/McpHealth.ps1',
+            'install/windows/AgentIntegration.ps1', 'install/windows/Update-Available.ps1',
+            'resources/tacto-skill.md']
 if len(sys.argv) > 1:
     archive = Path(sys.argv[1])
     if archive.suffix == '.tgz':

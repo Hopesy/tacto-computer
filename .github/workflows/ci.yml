@@ -33,6 +33,10 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python tests/test-probe.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --test tests/integration.test.mjs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tests/test-bridge.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Isolated Windows lifecycle and exports
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-cli-forwarding.ps1
@@ -42,6 +46,8 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-lifecycle.ps1 -TestMode Remote
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-exports.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-maintenance.ps1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Validate distributable packages
         run: |
@@ -69,4 +75,5 @@ jobs:
           npm run check
           python tests/test-cli.py
           python tests/test-probe.py
+          node --test tests/integration.test.mjs
           python tests/test-vps.py

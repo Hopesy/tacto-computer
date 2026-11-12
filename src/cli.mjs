@@ -4,6 +4,7 @@ import {hostname, homedir} from 'node:os';
 import {dirname, isAbsolute, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {childEnvironment} from './process-env.mjs';
+import {connectAgent, disconnectAgent, cleanupRemote} from './integration.mjs';
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const metadata = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
@@ -11,20 +12,26 @@ const help = `Tacto ${metadata.version} — Computer Use MCP
 
   tacto-mcp setup --local [--unattended]
   tacto-mcp setup --remote --vps-host HOST --vps-user USER [--identity-file PATH]
-  tacto-mcp update|check|uninstall [--install-dir PATH] [--unattended]
+  tacto-mcp update|rollback|check|uninstall [--install-dir PATH] [--unattended]
   tacto-mcp mcp [--install-dir PATH]
   tacto-mcp mcp --proxy /absolute/path/cua-proxy [--ssh HOST] [--ssh-config PATH]
   tacto-mcp config [connection options] [--output PATH] [--force]
-  tacto-mcp probe MCP_CONFIG_JSON [SERVER_NAME]
+  tacto-mcp probe MCP_CONFIG_JSON [SERVER_NAME] [--health] [--smoke]
+  tacto-mcp connect [connection options] --mcp-config PATH --skill-dir PATH --device-name NAME
+  tacto-mcp disconnect --mcp-config PATH --device-name NAME
+  tacto-mcp cleanup --receipt PATH [--identity-file PATH]
 
 The default command is mcp. Setup runs explicitly on the controlled Windows PC.
 Setup options: --device-name, --vps-port, --reverse-port, --local-ssh-port,
-               --identity-file, --driver-path, --install-dir, --unattended
+               --identity-file, --driver-path, --install-dir, --unattended,
+               --mcp-config, --skill-dir, --browser-mode isolated|existing
+Maintenance: --auto-update on|off (update), --force (update/rollback),
+             --keep-config (uninstall).
 Connection options: --install-dir, or --proxy with optional --ssh and --ssh-config.
 `;
-const flags = new Set(['local', 'remote', 'unattended', 'force']);
-const values = new Set(['vps-host', 'vps-user', 'vps-port', 'reverse-port', 'local-ssh-port', 'device-name', 'identity-file', 'driver-path', 'install-dir', 'proxy', 'ssh', 'ssh-config', 'output']);
-const setupOptions = new Set(['local', 'remote', 'unattended', 'vps-host', 'vps-user', 'vps-port', 'reverse-port', 'local-ssh-port', 'device-name', 'identity-file', 'driver-path', 'install-dir']);
+const flags = new Set(['local', 'remote', 'unattended', 'force', 'keep-config']);
+const values = new Set(['vps-host', 'vps-user', 'vps-port', 'reverse-port', 'local-ssh-port', 'device-name', 'identity-file', 'driver-path', 'install-dir', 'proxy', 'ssh', 'ssh-config', 'output', 'mcp-config', 'skill-dir', 'browser-mode', 'auto-update', 'receipt']);
+const setupOptions = new Set(['local', 'remote', 'unattended', 'vps-host', 'vps-user', 'vps-port', 'reverse-port', 'local-ssh-port', 'device-name', 'identity-file', 'driver-path', 'install-dir', 'mcp-config', 'skill-dir', 'browser-mode', 'auto-update']);
 const connectionOptions = ['install-dir', 'proxy', 'ssh', 'ssh-config'];
 
 function parse(args, allowed) {
@@ -92,17 +99,22 @@ async function connection(options) {
   if (config.Phase !== 'complete') throw new Error('Complete or repair the installation with: npx -y tacto-mcp update');
   if (typeof config.SocketPath !== 'string' || !config.SocketPath.startsWith('\\\\.\\pipe\\')) throw new Error('The installation has an invalid CUA pipe');
   if (typeof config.DriverPath !== 'string' || !isAbsolute(config.DriverPath)) throw new Error('The installation has an invalid CUA executable path');
+  if (config.RuntimePath) {
+    return {command: join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', await file(join(installDirectory(options), 'Invoke-CuaBridge.ps1')), '-ConfigPath', path, '-Local']};
+  }
   return {command: await file(config.DriverPath), args: ['mcp', '--socket', config.SocketPath]};
 }
 
 async function setup(command, options) {
   if (process.platform !== 'win32') throw new Error('Run desktop setup on the controlled Windows PC; use mcp --proxy on the Agent host');
   if (options.local && options.remote) throw new Error('Choose --local or --remote');
-  const action = {setup: 'Install', update: 'Install', check: 'Check', uninstall: 'Uninstall'}[command];
+  const action = {setup: 'Install', update: 'Update', rollback: 'Rollback', check: 'Check', uninstall: 'Uninstall'}[command];
   const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(packageRoot, 'install', 'windows', 'Setup-Tacto.ps1'), '-Action', action, '-InstallDirectory', installDirectory(options)];
   if (command === 'setup') args.push('-Mode', options.local ? 'Local' : 'Remote');
   if (options.unattended) args.push('-Unattended');
-  const mapping = {'vps-host': 'VpsHost', 'vps-user': 'VpsUser', 'vps-port': 'VpsPort', 'reverse-port': 'ReversePort', 'local-ssh-port': 'LocalSshPort', 'device-name': 'DeviceName', 'identity-file': 'IdentityFile', 'driver-path': 'DriverPath'};
+  if (options['keep-config']) args.push('-KeepConfig');
+  if (options.force) args.push('-Force');
+  const mapping = {'vps-host': 'VpsHost', 'vps-user': 'VpsUser', 'vps-port': 'VpsPort', 'reverse-port': 'ReversePort', 'local-ssh-port': 'LocalSshPort', 'device-name': 'DeviceName', 'identity-file': 'IdentityFile', 'driver-path': 'DriverPath', 'mcp-config': 'McpConfig', 'skill-dir': 'SkillDirectory', 'browser-mode': 'BrowserMode', 'auto-update': 'AutoUpdate'};
   for (const [name, parameter] of Object.entries(mapping)) {
     if (options[name] === undefined) continue;
     if (name.endsWith('port') && !/^\d+$/.test(options[name])) throw new Error(`--${name} must be an integer`);
@@ -124,12 +136,25 @@ async function main() {
   if (args[0] === '--version' || args[0] === 'version') { console.log(metadata.version); return 0; }
   const command = args[0] && !args[0].startsWith('--') ? args.shift() : 'mcp';
   if (command === 'probe') {
-    if (args.length < 1 || args.length > 2) throw new Error('Usage: tacto-mcp probe MCP_CONFIG_JSON [SERVER_NAME]');
+    if (args.length < 1 || args.length > 4) throw new Error('Usage: tacto-mcp probe MCP_CONFIG_JSON [SERVER_NAME]');
     return run(process.execPath, [join(packageRoot, 'src', 'probe.mjs'), await file(args[0]), ...args.slice(1)]);
   }
-  if (['setup', 'update', 'check', 'uninstall'].includes(command)) {
-    const allowed = command === 'setup' ? setupOptions : new Set(['install-dir', 'unattended', ...(command === 'update' ? ['identity-file', 'driver-path'] : [])]);
+  if (['setup', 'update', 'rollback', 'check', 'uninstall'].includes(command)) {
+    const allowed = command === 'setup' ? setupOptions : new Set(['install-dir', 'unattended', ...(command === 'update' ? ['identity-file', 'driver-path', 'auto-update', 'mcp-config', 'skill-dir', 'browser-mode', 'force'] : []), ...(command === 'uninstall' ? ['keep-config'] : []), ...(command === 'rollback' ? ['force'] : [])]);
     return setup(command, parse(args, allowed));
+  }
+  if (command === 'connect') {
+    const options = parse(args, new Set([...connectionOptions, 'mcp-config', 'skill-dir', 'device-name', 'browser-mode']));
+    console.log(JSON.stringify(await connectAgent(options, await connection(options), packageRoot), null, 2));
+    return 0;
+  }
+  if (command === 'disconnect') {
+    const options = parse(args, new Set(['mcp-config', 'device-name']));
+    console.log(JSON.stringify(await disconnectAgent(options), null, 2)); return 0;
+  }
+  if (command === 'cleanup') {
+    const options = parse(args, new Set(['receipt', 'identity-file']));
+    return cleanupRemote(options, packageRoot, run);
   }
   if (command === 'mcp' || command === 'config') {
     const options = parse(args, new Set([...connectionOptions, ...(command === 'config' ? ['output', 'force'] : [])]));

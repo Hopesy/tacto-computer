@@ -24,6 +24,7 @@ npm run check
 node bin/tacto.mjs --help
 python tests/test-cli.py
 python tests/test-probe.py
+node --test tests/integration.test.mjs
 ```
 
 ## Windows 安装流程
@@ -33,6 +34,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-cli-forwarding.ps
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-lifecycle.ps1 -TestMode Local
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-lifecycle.ps1 -TestMode Remote
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-exports.ps1
+python tests/test-bridge.py
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-maintenance.ps1
 ```
 
 安装测试为系统功能、计划任务和 VPS 通信提供隔离替身，实际执行密钥生成和后台启动器编译。CLI 转发测试通过进程替身检查安装入口和参数。目标电脑的首次安装与重启验收见 [验证记录](VERIFICATION.md)。
@@ -52,16 +55,30 @@ python3 tests/test-vps.py
 ```sh
 node -e "require('node:fs').mkdirSync('.Tacto-temp',{recursive:true})"
 npm pack --pack-destination .Tacto-temp
-python tests/verify-package.py .Tacto-temp/tacto-mcp-0.1.2.tgz
+python tests/verify-package.py .Tacto-temp/tacto-mcp-0.2.0.tgz
 ```
 
 生成 Windows ZIP：
 
 ```powershell
 ./scripts/Package.ps1
-python tests/verify-package.py .Tacto-temp/packages/Tacto-0.1.2.zip
+python tests/verify-package.py .Tacto-temp/packages/Tacto-0.2.0.zip
 ```
 
 `Package.ps1 -CuaArchive <官方压缩包路径>` 将校验通过的原始 CUA 归档放入 ZIP 的 `vendor/`。打包程序保留源码目录结构；解压后的双击安装入口位于 `install/windows/`。
 
 npm 与 ZIP 均包含运行代码、安装资源和文档。正式测试、CI 配置及 `.Tacto-temp` 运行产物保留在开发环境。
+
+## 真实 Windows 生命周期
+
+在已登录的测试桌面使用现有官方 Driver，测试创建独立任务、管道与目录：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-native-lifecycle.ps1 -DriverPath C:\path\to\cua-driver.exe
+```
+
+覆盖安装、更新、坏版本故障注入、自动恢复、手动回滚、任务重启、保留配置卸载、重装和完整卸载。该测试需要真实交互桌面，作为发布前验收；CI 使用隔离系统边界的生命周期测试及真实流式 MCP 桥接测试。产物位于 `.Tacto-temp/native-*`。
+
+省略 `-DriverPath` 会实际下载、校验官方 Driver，并验证自有 Driver 随完整卸载清理。完整健康报告包含 Windows UIA provider，环境异常会输出具体故障或超时；启动验收另有有界健康重试。
+
+npm 安装入口保持命令行形态；后台沿用 windowless launcher，发行包提供 npm 与源码 ZIP。

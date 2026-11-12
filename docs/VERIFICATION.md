@@ -1,38 +1,41 @@
 # Tacto 验证记录
 
-验证日期：2026-11-11。接入包版本：0.1.2；固定 CUA Driver：0.46.1。
+验证日期：2026-11-12。接入包版本：0.2.0；固定 CUA Driver：0.46.1。
 
-## 独立 npm 包
+## 自动回归
 
-- `tacto-mcp` 提供 setup、update、check、uninstall、config、mcp、probe 命令；npm 包的本地安装与版本入口已实测。
-- Tacto CLI 连接现有 CUA 完成真实 MCP 握手，发现 63 个工具；测试配置位于独立临时目录。
-- CLI 测试覆盖参数校验、SSH 引号与路径、本机配置、已有文件保护和安装参数转发；安装器覆盖自动模式默认值和缺失参数提示。
-- 子进程隔离父级 npm exec 的 package/call 参数，验证通过 npx 启动的检查器再次调用 npx MCP 服务时能正常解析命令。
-- Windows 和 Linux CI 使用隔离测试验证安装生命周期、VPS 初始化、配置导出、MCP 分页与错误处理；正式测试位于 `tests/`，运行产物位于 `.Tacto-temp/`。
+- Windows PowerShell 5.1 与 Node.js 语法检查；CLI 参数、SSH 引号、带空格路径和 npm 子进程环境隔离。
+- MCP 分页、无效响应、提前退出、协议版本，以及健康报告的文本回退、能力降级、核心故障和目标平台校验。
+- 本机与远端安装、版本暂存、故障恢复、事务中断恢复、手动回滚、旧版任务快照恢复、活动连接保护、保留配置重装、完整卸载和 VPS 离线清理凭据。
+- 自动更新任务启用/关闭、活动连接期间延后；专有 SSH 配置恢复与重装、用户修改保护。
+- 实际编译 C# MCP 替身，验证桥接脚本连续收发、维护门禁与连接租约清理。实际生成 SSH 密钥和编译原有隐藏后台启动器。
+- JSON 客户端配置合并、Skill 更新、异常回退、编辑内容保护、VPS 端清理登记，以及压缩 SSH 初始化代码的完整性和长度。
+- Linux/WSL 在临时 HOME 中运行 VPS 初始化、身份与端口冲突、重复卸载、Skill 同步、客户端清理、健康检查流式协议。实际执行 `ssh-keygen` 与 `ssh -G`。
 
-## 实际协议与进程验证
+## 真实 Windows 验收
 
-- 使用独立 Node.js 客户端连接已有本机 CUA，经 `initialize`、`notifications/initialized` 和 `tools/list` 发现 63 个工具。
-- 同一客户端经 SSH → VPS → Windows 回连完成握手与工具发现；`tools/call get_screen_size` 返回文字和结构化屏幕尺寸。该路径使用已有 SSH 隧道。
-- 在独立命名管道、PID 文件和临时目录下启动真实 CUA。使用本包编译的 WinExe 后台启动器启动，握手、工具发现及 `get_screen_size` 调用通过。
-- 结束临时后台启动器后，其 CUA 子进程随 Windows Job Object 退出，既有 CUA 服务继续运行。
-- 协商协议版本为 `2025-06-18`。工具发现检查器测试覆盖分页结果、重复游标、无效 JSON、提前退出及未知协议版本。
+在独立安装目录、设备身份、管道和计划任务中，使用真实官方 CUA Driver 执行：
 
-## 安装生命周期隔离验证
+- 本机安装、更新、损坏 Driver 故障注入及自动恢复、手动回滚、任务停止后重新启动。
+- 通过稳定桥接入口完成 MCP 初始化、工具发现、`health_report` 和只读 `get_screen_size`；发现 **63 个工具**，屏幕尺寸为 **1920×1080**、缩放 **1.25**。
+- 验证普通用户任务权限、后台启动器的 Windows GUI 子系统与空窗口句柄；验证保留配置卸载、重装、完整卸载和重复卸载。
+- 验证客户端其他条目和用户文件保留，已登记 Skill、任务、密钥及“已安装的应用”记录清理；外部指定的 Driver 保留。
+- 默认下载路径实际下载官方归档、核对 SHA256 与 Cua AI 签名；下载使用有超时的系统 curl，下载中断时保留有界重试。
 
-- Windows PowerShell 5.1：本机模式、远端模式分别完成安装 → 更新 → 检查 → 卸载。
-- Windows 功能安装、计划任务和 VPS 请求使用隔离替身；SSH 密钥生成和 C# 后台启动器编译实际执行。
-- 检查本机模式仅创建一项任务，远端模式创建两项任务；更新保留身份、管道和端口；重复授权幂等；卸载保留其他安装的授权。
-- Linux/WSL 的独立临时 HOME 下验证 VPS 准备、重复准备、卸载后重新接入、设备身份冲突、端口冲突、主机密钥配置、文件权限及异常 JSON 响应。真实执行 `ssh-keygen`、`ssh -G`。
-- VPS 权限测试在 Linux 文件系统的 `.Tacto-temp` 下执行；Windows 挂载目录的 POSIX 权限映射与 Linux VPS 存在差异。
-- 本机、VPS、外部 SSH 三种配置导出通过；含空格和单引号的路径保持正确，已有导出文件需显式 `-Force` 覆盖。
+测试脚本为 `tests/test-native-lifecycle.ps1`，过程证据位于 `.Tacto-temp/native-*`。省略 `-DriverPath` 可验证默认下载及自有 Driver 清理；指定该参数可验证外部 Driver 保留。
 
-## 打包与静态检查
+## 健康报告与环境因素
 
-- PowerShell 5.1 语法解析和 Node.js 语法检查通过。抽离前的源项目另已通过 `pnpm lint`。
-- 完整 ZIP 收录固定清单的源文件与官方原始 CUA 归档，逐文件 SHA256 写入 `manifest.json`；ZIP 另附 SHA256 文件。
-- 打包校验检查 manifest、文件内容、官方归档摘要及 CUA 数字签名。包内包含通用示例；安装状态和本机连接配置留在运行目录。
+完整报告曾返回 `ok`，也观察到第三方 Windows UIA provider 能力降级及诊断超时。安装/更新使用 binary、platform、session、screen capture 的启动检查；显式 `check` 与 `probe --health` 获取完整报告，保留故障与修复提示。超时会返回失败，后续可根据环境状态重新诊断。
 
-## 目标电脑验收
+任务启动等待与 MCP 健康验收分别处理；有界重试后仍失败会触发旧版恢复。卸载对 Windows 进程退出后短暂保留的文件句柄做有界重试。
 
-全新 Windows 上首次安装 OpenSSH、实际创建管理员计划任务，以及重启后登录恢复，仍需在目标电脑验收。安装器提供 `Check.cmd` 检查服务和远端回连。当前完成的是隔离安装流程测试、真实后台进程测试和既有 SSH 路径上的协议实测。
+## 打包与 CI
+
+`tests/verify-package.py` 验证 npm/ZIP 必要文件、npm 内容与源码一致、ZIP manifest 的逐文件摘要，以及解压到带空格目录后的 CLI 入口。发行形态为 npm 包及源码 ZIP；ZIP 可选附带官方原始 CUA 归档。
+
+[GitHub Actions](https://github.com/Hopesy/tacto-mcp/actions/workflows/ci.yml) 在 Windows 与 Linux 上运行回归。真实桌面测试作为发布前本机验收，CI 使用隔离的系统边界和实际流式 MCP 替身。
+
+## 部署验收范围
+
+本次实测覆盖已登录 Windows 的本机生命周期与任务重启。全新 Windows 首次安装 OpenSSH、提权后的 SSH 密码登录、真实 VPS 首次部署和整机重启登录仍需在目标电脑验收。此前 0.1.2 已验证过现有 SSH 隧道上的 VPS → Windows MCP 握手及屏幕尺寸调用；0.2.0 的 VPS 生命周期与清理行为已在 Linux 隔离环境回归。

@@ -16,6 +16,13 @@ createInterface({input:process.stdin}).on('line', line => {
  const m = JSON.parse(line); if (!m.id) return;
  if (mode === 'invalid') { console.log('not-json'); return; }
  if (mode === 'exit') { process.exit(2); }
+ if (mode.startsWith('health') && m.method === 'tools/list') {
+  console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:[{name:'health_report',inputSchema:{type:'object'}}]}})); return;
+ }
+ if (mode.startsWith('health') && m.method === 'tools/call') {
+  const health={schema_version:1,platform:mode==='health-platform'?'linux':'win32',overall:'degraded',checks:['binary_version','platform_supported','session_active'].map(name=>({name,status:mode==='health-fail'&&name==='session_active'?'fail':'pass'}))};
+  console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text:JSON.stringify(health)}]}})); return;
+ }
  const result = m.method === 'initialize'
  ? {protocolVersion:mode === 'version' ? '2099-01-01' : '2025-06-18',serverInfo:{name:'fixture',version:'1'},capabilities:{tools:{}}}
  : {tools:[{name:m.params.cursor ? 'second' : 'first',inputSchema:{type:'object'}}],...(mode === 'cursor' || !m.params.cursor ? {nextCursor:'next'} : {})};
@@ -28,7 +35,15 @@ class ProbeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='probe-', dir=root) as folder:
             config = Path(folder) / 'mcp.json'
             config.write_text(json.dumps({'mcpServers': {'fixture': {'command':'node','args':[str(fake),mode]}}}))
-            return subprocess.run(['node',str(probe),str(config)],capture_output=True,text=True,timeout=15,env={**os.environ,**(env or {})})
+            return subprocess.run(['node',str(probe),str(config)]+(['--health'] if mode.startswith('health') else []),capture_output=True,text=True,timeout=15,env={**os.environ,**(env or {})})
+    def test_health_semantics(self):
+        result=self.invoke('health-degraded')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(json.loads(result.stdout)['health']['overall'],'degraded')
+        for mode in ['health-fail','health-platform']:
+            result=self.invoke(mode)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('Desktop health failed',result.stderr)
     def test_paginated_discovery(self):
         result = self.invoke('success')
         self.assertEqual(result.returncode,0,result.stderr)

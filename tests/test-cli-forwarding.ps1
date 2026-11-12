@@ -30,7 +30,7 @@ try {
     & node --import $preloadUri (Join-Path $repo 'bin/tacto.mjs') update --unattended --install-dir (Join-Path $fixture 'install dir')
     if ($LASTEXITCODE) { throw 'CLI update failed' }
     $arguments = (Get-Content $env:TACTO_TEST_ARGS -Raw | ConvertFrom-Json).args
-    if ($arguments -contains '-Mode' -or $arguments -notcontains 'Install') { throw 'Update changed existing installation mode' }
+    if ($arguments -contains '-Mode' -or $arguments -notcontains 'Update') { throw 'Update changed existing installation mode' }
 } finally {
     $env:TACTO_TEST_ARGS = $previousArgs
 }

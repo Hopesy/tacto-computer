@@ -12,3 +12,5 @@ mcp-local.json
 mcp-vps.json
 keys/
 vendor/
+
+.codex/hooks.json

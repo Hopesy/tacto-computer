@@ -1,0 +1,15 @@
+# Lifecycle and agent integration
+
+Status: accepted. Source: user request, 2026-11-12.
+
+Priorities: complete/offline uninstall, transactional upgrade with recovery, unobtrusive installation, then opt-in idle updates. Installation identity, device name, pipe and keys survive upgrades. Only resources owned by this installation are removed. A remote cleanup failure must allow local cleanup and produce an actionable receipt.
+
+Updates stage a matched runtime, driver and target-bound Skill before stopping the current service. An on-disk journal and previous configuration allow recovery after process interruption as well as automatic rollback on validation failure. Existing MCP connections defer normal updates. Health verification exercises MCP initialize/tools/list/health_report, including the Windows interactive session, UIA and screen capture.
+
+Health acceptance follows the official schema-1 semantics: `failed` or missing/failed core checks (binary version, platform, session) reject activation; `degraded` reports the failed capability and hint while retaining a usable connection. A real third-party Windows UIA provider intermittently exceeded its timeout during acceptance. Requiring every optional capability to pass would trigger an unrelated rollback of a working transport. Preserve the complete report, allow 60 seconds for diagnostics, bound retries, and verify the real MCP endpoint separately. Core failure and an invalid Driver still exercise rollback.
+
+Activation explicitly requests binary, platform, session and screen-capture checks through `health_report.include`; `check` and `probe --health` request the full report including UIA. Task readiness and MCP verification are separate: a newly running task can still be initializing. Instance-specific status includes the matching PID file. A bounded readiness wait precedes failure recovery.
+
+The thin Tacto Skill binds to a named MCP server and the controlled platform. It obtains release-matched guidance through get_guide, uses live tool schemas for batching and incremental observations, rebuilds targets after reconnecting, coordinates concurrent agents, and makes browser profile selection explicit. Diagnostic recording is optional and preview capabilities are discovered at runtime.
+
+Official research: https://cua.ai/docs/cua-driver ; relevant pages are connect-your-agent, operate, vms-and-remote, browsers, how-cua-driver-works, and the health_report/run_steps/get_window_state references. Research corpus and detailed coverage are in `.Tacto-temp/cua-docs-review-20261112/`.

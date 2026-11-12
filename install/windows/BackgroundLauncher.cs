@@ -80,7 +80,7 @@ internal static class BackgroundLauncher
         {
             try
             {
-                string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tacto", "logs");
+                string folder = Path.Combine(Environment.CurrentDirectory, "logs");
                 Directory.CreateDirectory(folder);
                 File.AppendAllText(Path.Combine(folder, "background-launcher.log"), DateTimeOffset.Now.ToString("o") + " " + ex + Environment.NewLine);
             }

@@ -1,6 +1,7 @@
 import base64
 import importlib.util
 import json
+import hashlib
 import os
 from pathlib import Path
 import socket
@@ -52,6 +53,8 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(json.loads((folder/'mcp.json').read_text())['mcpServers'][first['mcpName']], first['mcp'])
         removed=setup.execute(dict(action='remove',device='test-laptop',clientId='id-1'),self.home)
         self.assertTrue(removed['removed'])
+        self.assertFalse(folder.exists())
+        self.assertTrue(setup.execute(dict(action='remove',device='test-laptop',clientId='id-1'),self.home)['purged'])
         self.assertIn('retained-key',self.auth.read_text())
         self.assertNotIn('tacto:',self.auth.read_text())
         replacement=setup.execute(dict(self.request,clientId='replacement'),self.home)
@@ -68,6 +71,45 @@ class SetupTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'identity mismatch'):
             setup.execute(dict(action='remove',device='test-laptop',clientId='wrong'),self.home)
 
+    def test_registered_agent_cleanup(self):
+        state = setup.execute(dict(self.request), self.home)
+        folder = self.home/'.tacto/devices/test-laptop'
+        config = self.home/'agent.json'
+        skill = self.home/'skills/tacto-test-laptop/SKILL.md'
+        skill.parent.mkdir(parents=True)
+        skill.write_text('Windows target skill')
+        receipt = Path(str(config)+'.tacto-test-laptop.json')
+        config.write_text(json.dumps({'mcpServers':{state['mcpName']:state['mcp'],'other':{'command':'other'}}}))
+        receipt.write_text(json.dumps(dict(config=str(config),name=state['mcpName'],server=state['mcp'],skill=str(skill),skillHash=hashlib.sha256(skill.read_bytes()).hexdigest())))
+        (folder/'agent-integrations.json').write_text(json.dumps([dict(clientId=state['clientId'],receipt=str(receipt))]))
+        configured=setup.execute(dict(action='configure',device='test-laptop',clientId='id-1',skillText='Updated Windows target skill'),self.home)
+        self.assertEqual(configured['preservedIntegrations'], [])
+        self.assertEqual(skill.read_text(), 'Updated Windows target skill')
+        self.assertEqual(json.loads(receipt.read_text())['skillHash'], hashlib.sha256(skill.read_bytes()).hexdigest())
+        removed = setup.execute(dict(action='remove',device='test-laptop',clientId='id-1'),self.home)
+        self.assertEqual(removed['preservedIntegrations'], [])
+        self.assertEqual(json.loads(config.read_text()), {'mcpServers':{'other':{'command':'other'}}})
+        self.assertFalse(skill.exists())
+        self.assertFalse(receipt.exists())
+        self.assertFalse(folder.exists())
+
+    def test_mcp_health_stream_and_core_failure(self):
+        fake = self.home/'mcp.py'
+        fake.write_text('''import json,sys
+for line in sys.stdin:
+ m=json.loads(line)
+ if 'id' not in m: continue
+ if m['method']=='initialize': result={'protocolVersion':'2025-06-18'}
+ elif m['method']=='tools/list': result={'tools':[{'name':'health_report'}]}
+ else:
+  result={'structuredContent':{'schema_version':'1','platform':'win32','overall':sys.argv[1],'checks':[{'name':name,'status':'pass'} for name in ['binary_version','platform_supported','session_active']]}}
+ print(json.dumps({'jsonrpc':'2.0','method':'notifications/message','params':{}})+'\\n'+json.dumps({'jsonrpc':'2.0','id':m['id'],'result':result}),flush=True)
+''')
+        for status in ('ok','degraded'):
+            self.assertEqual(setup.mcp_health([sys.executable,str(fake),status])['overall'],status)
+        with self.assertRaisesRegex(RuntimeError,'health failed'):
+            setup.mcp_health([sys.executable,str(fake),'failed'])
+
     def test_occupied_port_and_invalid_input(self):
         with socket.socket() as sock:
             sock.bind(('127.0.0.1',0))
@@ -80,12 +122,9 @@ class SetupTest(unittest.TestCase):
 
     def test_check_and_bootstrap_protocol(self):
         setup.execute(dict(self.request),self.home)
-        def command(args,**kwargs):
-            self.assertEqual(args[-1],'cua-status')
-            return 'Cua Driver daemon is running'
-        with patch.object(setup,'run',command):
+        with patch.object(setup,'mcp_health',return_value={'overall':'ok'}):
             self.assertTrue(setup.execute(dict(action='check',device='test-laptop',clientId='id-1'),self.home)['connected'])
-        with patch.object(setup,'run',return_value='not running'):
+        with patch.object(setup,'mcp_health',side_effect=RuntimeError('MCP failed')):
             with self.assertRaises(RuntimeError):
                 setup.execute(dict(action='check',device='test-laptop',clientId='id-1'),self.home)
         payload=base64.b64encode(json.dumps(dict(self.request,device='../bad')).encode()).decode()

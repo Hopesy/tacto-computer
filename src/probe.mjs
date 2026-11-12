@@ -5,7 +5,11 @@ import {childEnvironment} from './process-env.mjs';
 
 const {version} = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
-const [path, selected] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const healthRequested = argv.includes('--health') || argv.includes('--smoke');
+const smokeRequested = argv.includes('--smoke');
+if (argv.some(arg => arg.startsWith('--') && !['--health','--smoke'].includes(arg))) throw new Error('Unknown probe option');
+const [path, selected] = argv.filter(arg => !arg.startsWith('--'));
 if (!path) throw new Error('Usage: node probe.mjs <mcp.json> [server-name]');
 const config = JSON.parse((await readFile(path, 'utf8')).replace(/^\uFEFF/, ''));
 const names = Object.keys(config.mcpServers ?? {});
@@ -57,7 +61,7 @@ function request(method, params) {
       pending.delete(id);
       if (error) reject(error); else resolve(result);
     };
-    const timer = setTimeout(() => finish(new Error(`${method} timed out`)), 30_000);
+    const timer = setTimeout(() => finish(new Error(`${method} timed out`)), method === 'tools/call' ? 60_000 : 30_000);
     pending.set(id, {resolve: result => finish(null, result), reject: error => finish(error)});
     child.stdin.write(JSON.stringify({jsonrpc: '2.0', id, method, params}) + '\n');
   });
@@ -89,7 +93,28 @@ try {
     cursors.add(cursor);
   }
   if (!tools.length) throw new Error('The MCP server returned no tools');
-  console.log(JSON.stringify({ok: true, name, server: initialized.serverInfo, protocolVersion: initialized.protocolVersion, toolCount: tools.length, tools}, null, 2));
+  let health;
+  let smoke;
+  if (healthRequested) {
+    if (!tools.includes('health_report')) throw new Error('Missing health_report capability');
+    const result = await request('tools/call', {name: 'health_report', arguments: {}});
+    if (result.isError) throw new Error('Driver health_report failed');
+    health = result.structuredContent;
+    if (!health?.schema_version) {
+      for (const part of result.content ?? []) {
+        if (part.type !== 'text') continue;
+        try { const value = JSON.parse(part.text); if (value.schema_version) health = value; } catch {}
+      }
+    }
+    const required = ['binary_version', 'platform_supported', 'session_active'];
+    if (String(health?.schema_version) !== '1' || health.platform !== 'win32' || !['ok', 'degraded'].includes(health.overall) || !required.every(name => health.checks?.filter(check => check.name === name).length === 1 && health.checks.some(check => check.name === name && check.status === 'pass'))) throw new Error('Desktop health failed: ' + JSON.stringify(health));
+  }
+  if (smokeRequested) {
+    if (!tools.includes('get_screen_size')) throw new Error('Missing get_screen_size capability');
+    smoke = await request('tools/call', {name: 'get_screen_size', arguments: {}});
+    if (smoke.isError) throw new Error('Read-only desktop smoke check failed');
+  }
+  console.log(JSON.stringify({ok: true, name, health, smoke, server: initialized.serverInfo, protocolVersion: initialized.protocolVersion, toolCount: tools.length, tools}, null, 2));
 } finally {
   child.stdin.end();
   if (!await waitForExit(3_000)) {

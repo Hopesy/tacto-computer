@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet('Install','Check','Uninstall')][string]$Action = 'Install',
+    [ValidateSet('Install','Update','Rollback','Check','Uninstall')][string]$Action = 'Install',
     [ValidateSet('Local','Remote')][string]$Mode = 'Remote',
     [string]$VpsHost,
     [string]$VpsUser,
@@ -12,10 +12,19 @@ param(
     [string]$DriverPath,
     [string]$InstallDirectory = "$env:LOCALAPPDATA\Tacto",
     [string]$ExpectedUserSid,
+    [string]$ResultFile,
+    [string]$McpConfig,
+    [string]$SkillDirectory,
+    [ValidateSet('isolated','existing')][string]$BrowserMode = 'isolated',
+    [switch]$KeepConfig,
+    [switch]$Force,
+    [int]$ParentConsolePid,
+    [ValidateSet('on','off')][string]$AutoUpdate,
     [switch]$LibraryOnly,
     [switch]$Unattended
 )
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 Set-StrictMode -Version 2.0
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
 $script:PackageDirectory = $PSScriptRoot
@@ -24,6 +33,7 @@ $script:ConfigPath = Join-Path $InstallDirectory 'desktop.json'
 $script:Utf8 = [Text.UTF8Encoding]::new($false)
 $script:InteractiveInstall = -not $VpsHost
 $script:ModeSpecified = $PSBoundParameters.ContainsKey('Mode')
+$script:BrowserModeSpecified = $PSBoundParameters.ContainsKey('BrowserMode')
 
 function Write-Utf8([string]$Path, [string]$Text) {
     [IO.File]::WriteAllText($Path, $Text, $script:Utf8)
@@ -33,19 +43,23 @@ function Quote-Argument([string]$Value) {
     '"' + [regex]::Replace([regex]::Replace($Value, '(\\*)"', '$1$1\"'), '(\\+)$', '$1$1') + '"'
 }
 
-function Invoke-ProcessResult([string]$Executable, [string[]]$Arguments) {
+function Invoke-ProcessResult([string]$Executable, [string[]]$Arguments, [switch]$Interactive, [int]$TimeoutSeconds=180) {
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $Executable
     $info.Arguments = ($Arguments | ForEach-Object { Quote-Argument $_ }) -join ' '
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = -not $Interactive
+    $info.CreateNoWindow = -not $Interactive
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $info
     try {
         $process.Start() | Out-Null
         $outputTask = $process.StandardOutput.ReadToEndAsync()
-        $process.WaitForExit()
-        return @{ Code=$process.ExitCode; Output=$outputTask.Result }
+        $errorTask = if (-not $Interactive) { $process.StandardError.ReadToEndAsync() } else { $null }
+        if ($Interactive) { $process.WaitForExit() }
+        elseif (-not $process.WaitForExit($TimeoutSeconds * 1000)) { $process.Kill(); $process.WaitForExit(); throw "$Executable timed out after $TimeoutSeconds seconds." }
+        return @{ Code=$process.ExitCode; Output=$outputTask.Result; Error=$(if ($errorTask) { $errorTask.Result } else { '' }) }
     } finally { $process.Dispose() }
 }
 
@@ -53,6 +67,14 @@ function Invoke-Native([string]$Executable, [string[]]$Arguments) {
     $result = Invoke-ProcessResult $Executable $Arguments
     if ($result.Output) { Write-Host $result.Output.TrimEnd() }
     if ($result.Code -ne 0) { throw "$Executable 执行失败，退出码 $($result.Code)" }
+}
+
+function Receive-File([string]$Uri, [string]$Path) {
+    $curl=Join-Path $env:WINDIR 'System32\curl.exe'
+    if (Test-Path -LiteralPath $curl) {
+        $result=Invoke-ProcessResult $curl @('--fail','--location','--silent','--show-error','--proto','=https','--proto-redir','=https','--connect-timeout','15','--max-time','120','--output',$Path,$Uri)
+        if ($result.Code -ne 0) { throw ('Download failed: ' + $result.Error.Trim()) }
+    } else { Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Path -TimeoutSec 120 }
 }
 
 function Read-Setting([string]$Label, [string]$Value, [string]$Default) {
@@ -87,17 +109,25 @@ function Ensure-Elevation {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     if ($ExpectedUserSid -and $identity.User.Value -ne $ExpectedUserSid) { throw '请使用日常登录账户的管理员权限运行，以便接入该用户的桌面。' }
     if ([Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { return }
-    $forward = @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $script:PackageDirectory 'Setup-Tacto.ps1'),'-Action',$Action,'-InstallDirectory',$InstallDirectory,'-ExpectedUserSid',$identity.User.Value)
-    foreach ($name in @('VpsHost','VpsUser','DeviceName','IdentityFile','DriverPath')) {
+    $resultPath=$ResultFile
+    if (-not $resultPath) {
+        $folder=Join-Path ([IO.Path]::GetTempPath()) ('.Tacto-temp\elevation-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force $folder | Out-Null
+        $resultPath=Join-Path $folder 'result.json'
+    }
+    $forward = @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $script:PackageDirectory 'Setup-Tacto.ps1'),'-Action',$Action,'-InstallDirectory',$InstallDirectory,'-ExpectedUserSid',$identity.User.Value,'-ResultFile',$resultPath,'-ParentConsolePid',[string]$PID)
+    foreach ($name in @('VpsHost','VpsUser','DeviceName','IdentityFile','DriverPath','McpConfig','SkillDirectory','AutoUpdate')) {
         $value = Get-Variable -Name $name -ValueOnly
         if ($value) { $forward += @('-' + $name, [string]$value) }
     }
     if ($script:ModeSpecified) { $forward += @('-Mode',$Mode) }
-    if ($Unattended) { $forward += '-Unattended' }
+    if ($script:BrowserModeSpecified) { $forward += @('-BrowserMode',$BrowserMode) }
+    foreach ($flag in @('Unattended','KeepConfig','Force')) { if (Get-Variable -Name $flag -ValueOnly) { $forward += '-' + $flag } }
     $forward += @('-VpsPort',"$VpsPort",'-ReversePort',"$ReversePort",'-LocalSshPort',"$LocalSshPort")
     $arguments = ($forward | ForEach-Object { Quote-Argument $_ }) -join ' '
-    # This is the interactive installer; its console hosts SSH fingerprint and password prompts.
-    $process = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+    # Interactive SSH prompts reuse the original terminal; background helpers stay hidden.
+    $process = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+    if (Test-Path -LiteralPath $resultPath) { Write-Host (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8) }
     exit $process.ExitCode
 }
 
@@ -105,6 +135,21 @@ function Get-SshExe([string]$Name) {
     $path = Join-Path "$env:WINDIR\System32\OpenSSH" $Name
     if (-not (Test-Path -LiteralPath $path)) { throw "缺少 OpenSSH 程序：$path" }
     return $path
+}
+
+function Set-OwnedSshSettings($Config, [string]$ServerConfig, [bool]$Created) {
+    $backup=Join-Path $InstallDirectory 'sshd_config.before'
+    $restore=(Property $Config 'SshSettingsRestored' $false) -and (Test-Path -LiteralPath $backup) -and (Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $ServerConfig -Algorithm SHA256).Hash
+    if (-not $Created -and -not $restore) { return $false }
+    if ($Created) {
+        Set-Property $Config 'SshCreated' $true
+        Copy-Item -LiteralPath $ServerConfig -Destination $backup -Force
+    }
+    $body=Get-Content -LiteralPath $ServerConfig -Raw
+    Write-Utf8 $ServerConfig ("ListenAddress 127.0.0.1`r`nPort $($Config.LocalSshPort)`r`n" + $body)
+    Set-Property $Config 'SshConfigHash' (Get-FileHash -LiteralPath $ServerConfig -Algorithm SHA256).Hash
+    Set-Property $Config 'SshSettingsRestored' $false
+    return $true
 }
 
 function Ensure-OpenSsh($Config) {
@@ -122,14 +167,10 @@ function Ensure-OpenSsh($Config) {
         New-Item -ItemType Directory -Force "$env:ProgramData\ssh" | Out-Null
         Copy-Item -LiteralPath (Join-Path (Split-Path $sshd) 'sshd_config_default') -Destination $serverConfig
     }
-    if (-not $wasInstalled) {
-        Copy-Item -LiteralPath $serverConfig -Destination (Join-Path $InstallDirectory 'sshd_config.before') -Force
-        $body = Get-Content -LiteralPath $serverConfig -Raw
-        Write-Utf8 $serverConfig ("ListenAddress 127.0.0.1`r`nPort $($Config.LocalSshPort)`r`n" + $body)
-    }
+    $ownedSettings=Set-OwnedSshSettings $Config $serverConfig (-not $wasInstalled)
     Invoke-Native (Get-SshExe 'ssh-keygen.exe') @('-A')
     Invoke-Native $sshd @('-t','-f',$serverConfig)
-    Set-Service sshd -StartupType Automatic
+    if ($ownedSettings) { Set-Service sshd -StartupType Automatic }
     Start-Service sshd
     $settings = & $sshd -T -f $serverConfig -C "user=$env:USERNAME,host=localhost,addr=127.0.0.1"
     if ($LASTEXITCODE -ne 0) { throw '读取 OpenSSH 实际配置失败。' }
@@ -138,6 +179,7 @@ function Ensure-OpenSsh($Config) {
     $keySetting = $keySetting.Replace('__PROGRAMDATA__',$env:ProgramData).Replace('%h',$env:USERPROFILE).Replace('%u',$env:USERNAME)
     if (-not [IO.Path]::IsPathRooted($keySetting)) { $keySetting = Join-Path $env:USERPROFILE $keySetting }
     $Config.AuthorizedKeysFile = [IO.Path]::GetFullPath($keySetting)
+    if (-not $Config.PSObject.Properties['AuthorizedFileCreated']) { Set-Property $Config 'AuthorizedFileCreated' (-not (Test-Path -LiteralPath $Config.AuthorizedKeysFile)) }
     $Config.WindowsHostKey = (Get-Content -LiteralPath "$env:ProgramData\ssh\ssh_host_ed25519_key.pub" -Raw).Trim()
 }
 
@@ -164,8 +206,18 @@ function Install-Cua($Config) {
     $bundled = Join-Path $script:PackageRoot ('vendor\cua-' + $release.version + '.zip')
     if (-not (Test-Path -LiteralPath $archive) -and (Test-Path -LiteralPath $bundled)) { Copy-Item -LiteralPath $bundled -Destination $archive }
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    if (-not (Test-Path -LiteralPath $archive)) { Invoke-WebRequest -UseBasicParsing -Uri $release.url -OutFile $archive }
-    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $release.sha256) { throw "CUA 下载校验失败。删除 $archive 后重试。" }
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        if ((Test-Path -LiteralPath $archive) -and (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -eq $release.sha256) { break }
+        if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
+        $partial = $archive + '.partial'
+        try {
+            Write-Host ("Downloading verified CUA package (attempt $attempt/3)...")
+            Receive-File $release.url $partial
+            if ((Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash -ne $release.sha256) { throw 'CUA archive checksum mismatch' }
+            Move-Item -LiteralPath $partial -Destination $archive -Force
+        } catch { if ($attempt -eq 3) { throw }; Start-Sleep -Seconds $attempt }
+        finally { if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force } }
+    }
     Expand-Archive -LiteralPath $archive -DestinationPath $target -Force
     if (-not (Test-Path -LiteralPath $Config.DriverPath)) {
         $found = @(Get-ChildItem -LiteralPath $target -Filter cua-driver.exe -File -Recurse)
@@ -175,8 +227,15 @@ function Install-Cua($Config) {
     Assert-CuaSignature $Config.DriverPath
 }
 
-function Invoke-Vps($Config, [string]$RemoteAction, [switch]$Bootstrap) {
+function Invoke-Vps($Config, [string]$RemoteAction, [switch]$Bootstrap, [switch]$CoreOnly) {
     $request = @{ action=$RemoteAction; device=$Config.DeviceName; clientId=$Config.ClientId }
+    if ($CoreOnly) { $request.healthScope='activation' }
+    if ($Bootstrap -or $RemoteAction -eq 'configure') {
+        $templateRoot=Property $Config 'RuntimePath' $script:PackageRoot
+        $template=Get-Content -LiteralPath (Join-Path $templateRoot 'resources\tacto-skill.md') -Raw -Encoding UTF8
+        $request.skillText=$template.Replace('{{SERVER}}',('computer-' + $Config.DeviceName)).Replace('{{DEVICE}}',$Config.DeviceName).Replace('{{BROWSER}}',(Property $Config 'BrowserMode' 'isolated'))
+    }
+    if ($RemoteAction -eq 'remove') { $request.purge = $true }
     if ($Bootstrap) {
         $request.windowsUser = $env:USERNAME
         $request.windowsHostKey = $Config.WindowsHostKey
@@ -190,15 +249,20 @@ function Invoke-Vps($Config, [string]$RemoteAction, [switch]$Bootstrap) {
         if ($Unattended) { $sshArgs += @('-o','BatchMode=yes','-o','StrictHostKeyChecking=yes') }
         else { $sshArgs += @('-o','StrictHostKeyChecking=ask') }
         if ($IdentityFile) { $sshArgs += @('-i',(Resolve-Path -LiteralPath $IdentityFile).Path) }
-        $source = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $script:PackageRoot 'install/linux/setup-vps.py')))
-        $command = 'python3 -c "import base64;code=base64.b64decode(''{0}'').decode();exec(compile(code,''<bootstrap>'',''exec''),dict(__name__=''__main__'',__file__=''<bootstrap>'',BOOTSTRAP_SOURCE=code))" {1}' -f $source,$payload
+        $bytes=[IO.File]::ReadAllBytes((Join-Path $script:PackageRoot 'install/linux/setup-vps.py'))
+        $buffer=[IO.MemoryStream]::new()
+        $gzip=[IO.Compression.GZipStream]::new($buffer,[IO.Compression.CompressionMode]::Compress,$true)
+        try { $gzip.Write($bytes,0,$bytes.Length) } finally { $gzip.Dispose() }
+        $source=[Convert]::ToBase64String($buffer.ToArray()); $buffer.Dispose()
+        $command = 'python3 -c "import base64,gzip;code=gzip.decompress(base64.b64decode(''{0}'')).decode();exec(compile(code,''<bootstrap>'',''exec''),dict(__name__=''__main__'',__file__=''<bootstrap>'',BOOTSTRAP_SOURCE=code))" {1}' -f $source,$payload
+
     } else {
         $sshArgs += @('-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-i',$Config.TunnelKey)
         $command = $payload
     }
     if ($command.Length -gt 29000) { throw 'VPS 初始化命令过长，请更新安装包传输方式。' }
     $sshArgs += @("$($Config.VpsUser)@$($Config.VpsHost)",$command)
-    $nativeResult = Invoke-ProcessResult (Get-SshExe 'ssh.exe') $sshArgs
+    $nativeResult = Invoke-ProcessResult (Get-SshExe 'ssh.exe') $sshArgs -Interactive:($Bootstrap -and -not $Unattended)
     $response = @($nativeResult.Output -split '\r?\n')
     $code = $nativeResult.Code
     $line = @($response | Where-Object { $_ -like 'TACTO_SETUP_JSON=*' } | Select-Object -Last 1)
@@ -223,6 +287,10 @@ function Set-WindowsAuthorization($Config, [string]$PublicKey, [switch]$Remove) 
         $lines += 'restrict,command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded + '" ' + $parts[0] + ' ' + $parts[1] + ' ' + $marker
     }
     Write-Utf8 $path (($lines -join "`r`n") + "`r`n")
+    if ($Remove -and (Property $Config 'AuthorizedFileCreated' $false) -and @($lines | Where-Object { $_.Trim() }).Count -eq 0) {
+        Remove-Item -LiteralPath $path -Force
+        return
+    }
     if ((Split-Path $path -Leaf) -eq 'administrators_authorized_keys') {
         Invoke-Native icacls.exe @($path,'/inheritance:r','/grant:r','*S-1-5-18:(F)','*S-1-5-32-544:(F)')
     } else {
@@ -231,18 +299,17 @@ function Set-WindowsAuthorization($Config, [string]$PublicKey, [switch]$Remove) 
     }
 }
 
-function Save-Config($Config) { Write-Utf8 $script:ConfigPath ($Config | ConvertTo-Json -Depth 8) }
+function Save-Config($Config) { Write-AtomicJson $script:ConfigPath $Config }
 
 function Install-Tasks($Config) {
     $launcher = Join-Path $InstallDirectory 'BackgroundLauncher.exe'
-    $compiler = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-    Invoke-Native $compiler @('/nologo','/target:winexe','/platform:x64','/optimize+',"/out:$launcher",(Join-Path $InstallDirectory 'BackgroundLauncher.cs'))
+    $launcher = Join-Path $Config.RuntimePath 'install\windows\BackgroundLauncher.exe'
     $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $account
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $cuaArgs = @($Config.DriverPath,'serve','--socket',$Config.SocketPath,'--pid-file',(Join-Path $InstallDirectory 'cua.pid'))
-    $tunnelArgs = @("$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe",'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $InstallDirectory 'Start-Tunnel.ps1'),'-VpsHost',$Config.VpsHost,'-VpsUser',$Config.VpsUser,'-VpsPort',"$($Config.VpsPort)",'-ReversePort',"$($Config.ReversePort)",'-LocalSshPort',"$($Config.LocalSshPort)",'-IdentityFile',$Config.TunnelKey,'-KnownHostsFile',$Config.KnownHostsFile,'-InstanceName',$Config.TunnelTask,'-LogDirectory',(Join-Path $InstallDirectory 'logs'))
-    $taskSpecs = @(@{ Name=$Config.CuaTask; Args=$cuaArgs; Level='Highest' })
+    $tunnelArgs = @("$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe",'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $Config.RuntimePath 'install\windows\Start-Tunnel.ps1'),'-VpsHost',$Config.VpsHost,'-VpsUser',$Config.VpsUser,'-VpsPort',"$($Config.VpsPort)",'-ReversePort',"$($Config.ReversePort)",'-LocalSshPort',"$($Config.LocalSshPort)",'-IdentityFile',$Config.TunnelKey,'-KnownHostsFile',$Config.KnownHostsFile,'-InstanceName',$Config.TunnelTask,'-LogDirectory',(Join-Path $InstallDirectory 'logs'))
+    $taskSpecs = @(@{ Name=$Config.CuaTask; Args=$cuaArgs; Level='Limited' })
     if ($Config.Mode -eq 'Remote') { $taskSpecs += @{ Name=$Config.TunnelTask; Args=$tunnelArgs; Level='Limited' } }
     foreach ($spec in $taskSpecs) {
         $actionSpec = New-ScheduledTaskAction -Execute $launcher -Argument (($spec.Args | ForEach-Object { Quote-Argument $_ }) -join ' ') -WorkingDirectory $InstallDirectory
@@ -265,140 +332,79 @@ function Get-Config {
     return Get-Content -LiteralPath $script:ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 
-function Check-Desktop($Config) {
+function Check-Desktop($Config, [switch]$Activation) {
     $taskNames = @($Config.CuaTask)
     if ($Config.Mode -eq 'Remote') { $taskNames += $Config.TunnelTask }
     foreach ($name in $taskNames) {
         $task = Get-ScheduledTask -TaskName $name -ErrorAction Stop
         Write-Host ("{0}: {1}" -f $name,$task.State)
-        if ($task.State -ne 'Running') { throw "任务尚未运行：$name" }
+        if ($task.State -ne 'Running') {
+            $taskInfo=Get-ScheduledTaskInfo -TaskName $name
+            if ($taskInfo.LastTaskResult -notin @(0,267009,267011)) { throw "Background task $name failed with result $($taskInfo.LastTaskResult)." }
+            throw "Tacto readiness: task $name is $($task.State)."
+        }
     }
-    $driverStatus = Invoke-ProcessResult $Config.DriverPath @('status','--socket',$Config.SocketPath)
-    if ($driverStatus.Code -ne 0 -or $driverStatus.Output -notmatch 'daemon is running') { throw 'CUA 服务尚未就绪，请稍后运行 Check.cmd。' }
+    $driverStatus = Invoke-ProcessResult $Config.DriverPath @('status','--socket',$Config.SocketPath,'--pid-file',(Join-Path $InstallDirectory 'cua.pid')) -TimeoutSeconds 10
+    if ($driverStatus.Code -notin @(0,1)) { throw "CUA executable failed with exit code $($driverStatus.Code)." }
+    if ($driverStatus.Code -ne 0 -or $driverStatus.Output -notmatch 'daemon is running') { throw 'Tacto readiness: the CUA daemon is still starting.' }
     Write-Host $driverStatus.Output.TrimEnd()
-    if ($Config.Mode -eq 'Remote') { $result = Invoke-Vps $Config 'check'; Write-Host $result.status }
-    Write-Host '检查通过：Tacto 后台服务和连接正常。' -ForegroundColor Green
+    $health = Invoke-McpHealth $Config -CoreOnly:$Activation
+    $remoteHealth = $null
+    if ($Config.Mode -eq 'Remote') {
+        $result = Invoke-Vps $Config 'check' -CoreOnly:$Activation
+        if (Property $Config.Remote 'managementVersion') { $remoteHealth=$result.health; Assert-Health $remoteHealth }
+        else { throw 'Upgrade the VPS helper once using the original SSH login before running full diagnostics.' }
+    }
+    $diagnostic = @{ok=$true;scope=$(if ($Activation) { 'activation' } else { 'full' });driver=$health;remote=$remoteHealth;daemonUser=$Config.UserSid;callerUser=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;callerSession=[Diagnostics.Process]::GetCurrentProcess().SessionId}
+    Write-Host ($diagnostic | ConvertTo-Json -Depth 16 -Compress)
+    $script:Outcome = 'MCP connected. Desktop health: ' + $health.overall + '. Capability details are included in the report.'
+
 }
 
-function Install-Desktop {
-    $previous = if (Test-Path -LiteralPath $script:ConfigPath) { Get-Config } else { $null }
-    $changed = $previous -and (($script:ModeSpecified -and $Mode -ne $previous.Mode) -or ($previous.Mode -eq 'Remote' -and (($VpsHost -and $VpsHost -ne $previous.VpsHost) -or ($VpsUser -and $VpsUser -ne $previous.VpsUser))) -or ($DeviceName -and $DeviceName -ne $previous.DeviceName))
-    if ($changed -and $previous.Phase -eq 'uninstalled') {
-        $backup = Join-Path $InstallDirectory ('.Tacto-temp\removed-' + (Get-Date -Format yyyyMMdd-HHmmss))
-        New-Item -ItemType Directory -Force $backup | Out-Null
-        Copy-Item -LiteralPath $script:ConfigPath -Destination (Join-Path $backup 'desktop.json')
-        $previous = $null
-    }
-    if ($previous) {
-        $config = $previous
-        if ($script:ModeSpecified -and $Mode -ne $config.Mode) { throw '更改接入方式前，请先卸载现有连接。' }
-        if (($config.Mode -eq 'Remote' -and (($VpsHost -and $VpsHost -ne $config.VpsHost) -or ($VpsUser -and $VpsUser -ne $config.VpsUser))) -or ($DeviceName -and $DeviceName -ne $config.DeviceName)) { throw '迁移 VPS 或更改电脑名称前，请先运行 Uninstall.cmd。' }
-        Write-Host ("更新现有连接：" + $config.DeviceName + $(if ($config.Mode -eq 'Remote') { " -> $($config.VpsHost)" } else { '（本机）' }))
-    } else {
-        $defaultDevice = ($env:COMPUTERNAME.ToLower() -replace '[^a-z0-9-]','-')
-        if ($defaultDevice -notmatch '^[a-z]') { $defaultDevice = 'pc-' + $defaultDevice }
-        if ($defaultDevice.Length -gt 24) { $defaultDevice = $defaultDevice.Substring(0,24) }
-        $config = [pscustomobject]@{
-            VpsHost=$(if ($Mode -eq 'Remote') { Read-Setting 'VPS 地址' $VpsHost '' } else { '' }); VpsUser=$(if ($Mode -eq 'Remote') { Read-Setting 'VPS SSH 用户名' $VpsUser '' } else { '' });
-            VpsPort=$VpsPort; DeviceName=(Read-Setting '电脑名称' $DeviceName $defaultDevice); ReversePort=$ReversePort;
-            LocalSshPort=$LocalSshPort; Mode=$Mode; SocketPath=''; ClientId=[guid]::NewGuid().ToString();
-            DriverPath=''; DriverOwned=$true; AuthorizedKeysFile=''; WindowsHostKey='';
-            TunnelKey=(Join-Path $InstallDirectory 'keys\tunnel'); KnownHostsFile=(Join-Path $InstallDirectory 'keys\known_hosts');
-            CuaTask=''; TunnelTask=''; Remote=$null; Phase='preparing'; UserSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-        }
-        if ($Mode -eq 'Remote' -and $script:InteractiveInstall -and $VpsPort -eq 22) { $config.VpsPort = [int](Read-Setting 'VPS SSH 端口' '' '22') }
-        $instanceName = $config.DeviceName + '-' + $config.ClientId.Substring(0,8)
-        $config.SocketPath = '\\.\pipe\tacto-' + $instanceName
-        $config.CuaTask = 'Tacto-CUA-' + $instanceName
-        $config.TunnelTask = 'Tacto-Tunnel-' + $instanceName
-    }
-    Assert-Settings $config
-    Protect-Directory $InstallDirectory
-    Protect-Directory (Join-Path $InstallDirectory 'keys')
-    if ($previous) {
-        $backup = Join-Path $InstallDirectory ('.Tacto-temp\backup-' + (Get-Date -Format yyyyMMdd-HHmmss))
-        New-Item -ItemType Directory -Force $backup | Out-Null
-        Copy-Item -LiteralPath $script:ConfigPath -Destination (Join-Path $backup 'desktop.json')
-        foreach ($name in @($config.CuaTask,$config.TunnelTask)) {
-            if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { Export-ScheduledTask -TaskName $name | Set-Content -LiteralPath (Join-Path $backup ($name + '.xml')) -Encoding Unicode }
-        }
-    }
-    Save-Config $config
-    Write-Host $(if ($config.Mode -eq 'Remote') { '[1/6] 配置 Windows OpenSSH' } else { '[1/6] 准备本机连接' })
-    if ($config.Mode -eq 'Remote') { Ensure-OpenSsh $config }
-    Save-Config $config
-    Write-Host '[2/6] 安装并验证 CUA'
-    Install-Cua $config
-    Save-Config $config
-    Write-Host $(if ($config.Mode -eq 'Remote') { '[3/6] 配置 VPS 密钥和连接（首次连接按 SSH 提示确认指纹并登录）' } else { '[3/6] 准备独立服务目录' })
-    if ($config.Mode -eq 'Remote') {
-        if (-not (Test-Path -LiteralPath $config.TunnelKey)) {
-            $keyArgs = @('-q','-t','ed25519','-N','','-f',$config.TunnelKey)
-            Invoke-Native (Get-SshExe 'ssh-keygen.exe') $keyArgs
-        }
-        $config.Remote = Invoke-Vps $config 'prepare' -Bootstrap
-        $config.ReversePort = $config.Remote.reversePort
-        Save-Config $config
-    }
-    Write-Host $(if ($config.Mode -eq 'Remote') { '[4/6] 安装后台启动器和受限 CUA 回连入口' } else { '[4/6] 安装后台启动器' })
-    Stop-OwnedTasks $config
-    foreach ($file in @('Start-Tunnel.ps1','BackgroundLauncher.cs','Invoke-CuaBridge.ps1')) {
-        $source = Join-Path $script:PackageDirectory $file
-        $destination = Join-Path $InstallDirectory $file
-        if ([IO.Path]::GetFullPath($source) -ne [IO.Path]::GetFullPath($destination)) { Copy-Item -LiteralPath $source -Destination $destination -Force }
-    }
-    if ($config.Mode -eq 'Remote') { Set-WindowsAuthorization $config $config.Remote.windowsKey }
-    Install-Tasks $config
-    $config.Phase = 'connecting'
-    Save-Config $config
-    Write-Host $(if ($config.Mode -eq 'Remote') { '[5/6] 验证 CUA 与 VPS 回连' } else { '[5/6] 验证本机 CUA' })
-    if ($config.Mode -eq 'Remote') {
-        foreach ($attempt in 1..12) {
-            Start-Sleep -Seconds 3
-            try { $null = Invoke-Vps $config 'check'; break }
-            catch { if ($attempt -eq 12) { throw }; Write-Host '等待后台连接建立…' }
-        }
-    } else { Start-Sleep -Seconds 3 }
-    Write-Host '[6/6] 导出标准 MCP 配置'
-    $name = 'computer-' + $config.DeviceName
-    $local = @{ command=$config.DriverPath; args=@('mcp','--socket',$config.SocketPath) }
-    Write-Utf8 (Join-Path $InstallDirectory 'mcp-local.json') (@{ mcpServers=@{ $name=$local } } | ConvertTo-Json -Depth 8)
-    if ($config.Mode -eq 'Remote') {
-        Write-Utf8 (Join-Path $InstallDirectory 'mcp-vps.json') (@{ mcpServers=@{ $name=$config.Remote.mcp } } | ConvertTo-Json -Depth 8)
-    }
-    $config.Phase = 'complete'
-    Save-Config $config
-    Check-Desktop $config
-    Write-Host "安装完成。标准 MCP 配置：$InstallDirectory\mcp-local.json" -ForegroundColor Green
-    if ($config.Mode -eq 'Remote') { Write-Host "VPS 上的 Agent 使用 $InstallDirectory\mcp-vps.json，反向端口 $($config.ReversePort)。" }
-}
-
-function Uninstall-Desktop {
-    $config = Get-Config
-    if ($config.Mode -eq 'Remote') { $null = Invoke-Vps $config 'remove' }
-    Stop-OwnedTasks $config
-    foreach ($name in @($config.CuaTask,$config.TunnelTask)) {
-        if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName $name -Confirm:$false }
-    }
-    if ($config.Mode -eq 'Remote') { Set-WindowsAuthorization $config '' -Remove }
-    $config.Phase = 'uninstalled'
-    Save-Config $config
-    Write-Host $(if ($config.Mode -eq 'Remote') { '连接已卸载：登录任务、双方授权已移除。安装文件、日志和 OpenSSH 服务保留。' } else { '本机连接已卸载：登录任务已移除，安装文件和日志保留。' }) -ForegroundColor Green
-}
+. (Join-Path $PSScriptRoot 'Lifecycle.ps1')
+. (Join-Path $PSScriptRoot 'McpHealth.ps1')
+. (Join-Path $PSScriptRoot 'AgentIntegration.ps1')
 
 if ($LibraryOnly) { return }
+$lock = $null
 try {
-    if (-not [Environment]::Is64BitProcess -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw '请在 Windows 10/11 x64 的 64 位 PowerShell 中运行。' }
-    Ensure-Elevation
+    if (-not [Environment]::Is64BitProcess -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw '请使用 Windows 10/11 x64。' }
+    if ($ParentConsolePid -and -not $Unattended) {
+        Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class TactoConsole { [DllImport("kernel32.dll")] public static extern bool FreeConsole(); [DllImport("kernel32.dll")] public static extern bool AttachConsole(uint pid); }'
+        [TactoConsole]::FreeConsole() | Out-Null
+        if (-not [TactoConsole]::AttachConsole([uint32]$ParentConsolePid)) { throw 'Run remote setup from your terminal, or use --unattended with a trusted host and SSH key.' }
+    }
+    Assert-InstallRoot
+    $existing = if (Test-Path -LiteralPath $script:ConfigPath) { Get-Config } else { $null }
+    if ($Action -eq 'Install' -and -not $existing -and $Mode -eq 'Remote') {
+        $VpsHost=Read-Setting 'VPS host' $VpsHost ''
+        $VpsUser=Read-Setting 'VPS user' $VpsUser ''
+        if (-not $DeviceName) { $DeviceName=(New-DesktopConfig).DeviceName }
+    }
+    if (Test-NeedsElevation $existing) { Ensure-Elevation }
+    if ($Action -ne 'Check') { $lock = Enter-LifecycleLock }
+    if (Test-Path -LiteralPath (Join-Path $InstallDirectory 'transaction.json')) {
+        if ($Action -eq 'Check') { throw 'An interrupted update needs recovery. Run update or uninstall.' }
+        Restore-Transaction
+    }
     switch ($Action) {
         'Install' { Install-Desktop }
-        'Check' { Check-Desktop (Get-Config) }
+        'Update' { if (-not $existing) { throw '请先安装 Tacto。' }; Install-Desktop }
+        'Rollback' { Invoke-Rollback }
+        'Check' { $checked=Get-Config; if ($checked.Phase -ne 'complete') { throw 'Complete or repair the installation with update.' }; Check-Desktop $checked }
         'Uninstall' { Uninstall-Desktop }
     }
-    if ($ExpectedUserSid -and -not $Unattended) { Read-Host '按回车关闭此窗口' | Out-Null }
+    if ($ResultFile) { Write-Utf8 $ResultFile (@{ok=$true;action=$Action;message=$script:Outcome;pendingRemote=$script:PendingRemote} | ConvertTo-Json -Depth 8) }
 } catch {
-    Write-Host ("操作未完成：" + $_.Exception.Message) -ForegroundColor Red
-    Write-Host "安装记录：$script:ConfigPath；隧道日志：$InstallDirectory\logs\desktop-tunnel.log。修正后可重新运行。"
-    if ($ExpectedUserSid -and -not $Unattended) { Read-Host '按回车关闭此窗口' | Out-Null }
+    $message = $_.Exception.Message
+    if ($ResultFile) { Write-Utf8 $ResultFile (@{ok=$false;action=$Action;message=$message} | ConvertTo-Json) }
+    [Console]::Error.WriteLine('Tacto: ' + $message)
     exit 1
+} finally {
+    if ($lock) { $lock.Dispose() }
+    if ($Action -eq 'Uninstall' -and (Test-Path -LiteralPath $InstallDirectory)) {
+        $lockFile = Join-Path $InstallDirectory '.lifecycle.lock'
+        if (Test-Path -LiteralPath $lockFile) { Remove-Item -LiteralPath $lockFile -Force -ErrorAction SilentlyContinue }
+        if (@(Get-ChildItem -LiteralPath $InstallDirectory -Force).Count -eq 0) { Remove-Item -LiteralPath $InstallDirectory }
+    }
 }

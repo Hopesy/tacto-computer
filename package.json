@@ -1,6 +1,6 @@
 {
   "name": "tacto-mcp",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Agent-independent Computer Use MCP for Windows desktops, locally or over SSH.",
   "type": "module",
   "bin": {
@@ -40,7 +40,7 @@
     "NOTICE"
   ],
   "scripts": {
-    "check": "node --check bin/tacto.mjs && node --check src/cli.mjs && node --check src/probe.mjs && node --check src/process-env.mjs",
+    "check": "node --check bin/tacto.mjs && node --check src/cli.mjs && node --check src/probe.mjs && node --check src/process-env.mjs && node --check src/integration.mjs",
     "prepublishOnly": "npm run check"
   },
   "publishConfig": {
