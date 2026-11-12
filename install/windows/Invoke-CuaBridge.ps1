@@ -1,5 +1,6 @@
 ﻿param([Parameter(Mandatory=$true)][string]$ConfigPath, [switch]$Local, [switch]$Cli)
 $ErrorActionPreference='Stop'
+[Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $OutputEncoding=[Console]::OutputEncoding
 $config=Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -77,13 +78,13 @@ public static class TactoStream {
                 $inputCopy=$null
                 if ($command -eq 'cua-cli') {
                     if ($toolInput) { $bytes=[Text.Encoding]::UTF8.GetBytes($toolInput); $child.StandardInput.BaseStream.Write($bytes,0,$bytes.Length); $child.StandardInput.BaseStream.Flush() }
-                    $child.StandardInput.Close()
+                    $child.StandardInput.BaseStream.Close()
                 } else { $inputCopy=[TactoStream]::Copy([Console]::OpenStandardInput(),$child.StandardInput.BaseStream) }
                 $outputCopy=[TactoStream]::Copy($child.StandardOutput.BaseStream,[Console]::OpenStandardOutput())
                 $errorCopy=[TactoStream]::Copy($child.StandardError.BaseStream,[Console]::OpenStandardError())
                 $inputClosed=$false
                 while (-not $child.WaitForExit(100)) {
-                    if ($inputCopy -and $inputCopy.IsCompleted -and -not $inputClosed) { $child.StandardInput.Close(); $inputClosed=$true }
+                    if ($inputCopy -and $inputCopy.IsCompleted -and -not $inputClosed) { $child.StandardInput.BaseStream.Close(); $inputClosed=$true }
                 }
                 $outputCopy.Wait(); $errorCopy.Wait()
                 $code=$child.ExitCode

@@ -25,6 +25,7 @@ param(
     [switch]$Unattended
 )
 $ErrorActionPreference = 'Stop'
+[Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 Set-StrictMode -Version 2.0
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
@@ -62,7 +63,7 @@ function Invoke-ProcessResult([string]$Executable, [string[]]$Arguments, [switch
         if ($info.RedirectStandardInput) {
             $inputBytes=$script:Utf8.GetBytes($InputText)
             $process.StandardInput.BaseStream.Write($inputBytes,0,$inputBytes.Length)
-            $process.StandardInput.Close()
+            $process.StandardInput.BaseStream.Close()
         }
         if ($Interactive) { $process.WaitForExit() }
         elseif (-not $process.WaitForExit($TimeoutSeconds * 1000)) { $process.Kill(); $process.WaitForExit(); throw "$Executable timed out after $TimeoutSeconds seconds." }

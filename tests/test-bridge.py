@@ -58,8 +58,10 @@ Console.WriteLine(json.Serialize(new { arguments=args, input=Console.In.ReadToEn
             pipe=r'\\.\pipe\cli-test'
             config.write_text(json.dumps(dict(Phase='complete',DriverPath=str(driver),SocketPath=pipe)))
             def invoke(request,remote=False):
-                args=['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(root/'install/windows/Invoke-CuaBridge.ps1'),'-ConfigPath',str(config)]
-                if not remote: args+=['-Local','-Cli']
+                quote=lambda value: "'"+str(value).replace("'","''")+"'"
+                command="[Console]::InputEncoding=[Text.UTF8Encoding]::new($true); & "+quote(root/'install/windows/Invoke-CuaBridge.ps1')+' -ConfigPath '+quote(config)
+                if not remote: command+=' -Local -Cli'
+                args=['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',command]
                 return subprocess.run(args,input=json.dumps(request,ensure_ascii=False),capture_output=True,text=True,encoding='utf-8',timeout=30,env={**os.environ,'SSH_ORIGINAL_COMMAND':'cua-cli'})
             payload=dict(command='call',tool='get_session',args=dict(session='named-test',text='中文 ☃'))
             for remote in (False,True):
