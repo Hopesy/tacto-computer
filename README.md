@@ -6,7 +6,7 @@ Tacto 负责 CUA Driver、SSH 隧道、后台启动、升级恢复和卸载。Ag
 
 仓库和 npm 包统一命名为 **`tacto-computer`**，提供 **`tacto-cli`** 命令、**`tacto-computer`** Skill，以及 **`tacto-mcp`** MCP 服务。设备名称记录在连接参数和安装状态中。
 
-当前版本 **0.4.0**。安装入口统一使用 npm/命令行。受控电脑需要 Windows 10/11 x64；npm CLI 需要 Node.js 22+。Agent 可以运行在 Windows、Linux VPS、容器或其他支持命令行或 MCP 的环境。远端 VPS 需要 Python 3 和 OpenSSH。
+当前版本 **0.4.1**。安装入口统一使用 npm/命令行。受控电脑需要 Windows 10/11 x64；npm CLI 需要 Node.js 22+。Agent 可以运行在 Windows、Linux VPS、容器或其他支持命令行或 MCP 的环境。远端 VPS 需要 Python 3 和 OpenSSH。
 
 ## 一条命令安装
 

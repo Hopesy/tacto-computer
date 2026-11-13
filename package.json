@@ -1,6 +1,6 @@
 {
   "name": "tacto-computer",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Agent-independent Computer Use CLI and MCP for Windows desktops, locally or over SSH.",
   "type": "module",
   "bin": {

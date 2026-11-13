@@ -3,7 +3,7 @@ import {readFile, writeFile, mkdir, stat} from 'node:fs/promises';
 import {hostname, homedir} from 'node:os';
 import {dirname, isAbsolute, join, resolve, posix} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {childEnvironment} from './process-env.mjs';
+import {childEnvironment, windowsPowerShellEnvironment} from './process-env.mjs';
 import {connectAgent, disconnectAgent, cleanupRemote} from './integration.mjs';
 import {driverCommand} from './driver-cli.mjs';
 import {metadata, mcpName} from './product.mjs';
@@ -64,7 +64,7 @@ async function file(path) {
 
 function run(command, args, env = {}) {
   return new Promise((resolveResult, reject) => {
-    const child = spawn(command, args, {stdio: 'inherit', windowsHide: true, env: childEnvironment(env)});
+    const child = spawn(command, args, {stdio: 'inherit', windowsHide: true, env: childEnvironment(env,command)});
     const interrupt = () => child.kill('SIGINT');
     const terminate = () => child.kill('SIGTERM');
     process.on('SIGINT', interrupt);
@@ -107,7 +107,7 @@ async function connection(options, mode='mcp') {
   if (typeof config.DriverPath !== 'string' || !isAbsolute(config.DriverPath)) throw new Error('The installation has an invalid CUA executable path');
   if (mode==='cli' && (!config.RuntimePath || config.CliBridgeVersion !== 1)) throw new Error('Update the controlled PC to enable the Tacto CLI bridge');
   if (config.RuntimePath) {
-    return {command: join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', await file(join(installDirectory(options), 'Invoke-CuaBridge.ps1')), '-ConfigPath', path, '-Local',...(mode==='cli'?['-Cli']:[])]};
+    return {command: join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', await file(join(installDirectory(options), 'Invoke-CuaBridge.ps1')), '-ConfigPath', path, '-Local',...(mode==='cli'?['-Cli']:[])], env:windowsPowerShellEnvironment()};
   }
   return {command: await file(config.DriverPath), args: ['mcp', '--socket', config.SocketPath]};
 }
@@ -169,7 +169,7 @@ async function main() {
   if (command === 'mcp' || command === 'config') {
     const options = parse(args, new Set([...connectionOptions, ...(command === 'config' ? ['output', 'force'] : [])]));
     const server = await connection(options);
-    if (command === 'mcp') return run(server.command, server.args);
+    if (command === 'mcp') return run(server.command, server.args, server.env);
     const json = JSON.stringify({mcpServers: {[mcpName]: server}}, null, 2) + '\n';
     if (options.output) {
       const output = resolve(options.output);

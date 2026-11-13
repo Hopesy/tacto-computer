@@ -160,7 +160,7 @@ function Register-Uninstaller($Config) {
 }
 function Export-Connections($Config) {
     $powershell = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $server = @{command=$powershell;args=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $InstallDirectory 'Invoke-CuaBridge.ps1'),'-ConfigPath',$script:ConfigPath,'-Local')}
+    $server = @{command=$powershell;args=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $InstallDirectory 'Invoke-CuaBridge.ps1'),'-ConfigPath',$script:ConfigPath,'-Local');env=@{PSModulePath=([IO.Path]::Combine((Split-Path $powershell),'Modules'))}}
     $name=(Get-TargetProduct $Config).mcpName
     Write-AtomicJson (Join-Path $InstallDirectory 'mcp-local.json') @{mcpServers=@{$name=$server}}
     if ($Config.Mode -eq 'Remote') { Write-AtomicJson (Join-Path $InstallDirectory 'mcp-vps.json') @{mcpServers=@{$name=$Config.Remote.mcp}} }

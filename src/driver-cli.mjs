@@ -37,7 +37,7 @@ export async function driverCommand(argv, connect) {
   if (screenshot && command !== 'call') throw new Error('--screenshot-out-file requires a tool call');
   const target=await connect(options,'cli');
   return new Promise((resolveExit,reject) => {
-    const child=spawn(target.command,target.args,{stdio:['pipe',screenshot?'pipe':'inherit','inherit'],windowsHide:true,env:childEnvironment()});
+    const child=spawn(target.command,target.args,{stdio:['pipe',screenshot?'pipe':'inherit','inherit'],windowsHide:true,env:childEnvironment(target.env,target.command)});
     const chunks=[]; let length=0;
     if (screenshot) child.stdout.on('data',chunk=>{ length+=chunk.length; if (length>64*1024*1024) { child.kill(); reject(new Error('Screenshot response exceeds 64 MiB')); } else chunks.push(chunk); });
     const stop=()=>child.kill();

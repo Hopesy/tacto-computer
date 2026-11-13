@@ -65,6 +65,7 @@ if ($TestMode -eq 'Remote') { Assert (Test-Path (Join-Path $fixture 'keys\tunnel
 Assert (Test-Path (Join-Path $fixture 'mcp-local.json')) 'Local MCP config missing'
 $exported = Get-Content (Join-Path $fixture 'mcp-local.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 Assert ($exported.mcpServers.'tacto-mcp'.args -contains $script:ConfigPath) 'Export must use stable installation bridge'
+Assert ($exported.mcpServers.'tacto-mcp'.env.PSModulePath -eq (Join-Path $PSHOME 'Modules')) 'MCP startup must use Windows PowerShell modules'
 Assert ($first.SocketPath -ne '\\.\pipe\cua-driver') 'Install reused global pipe'
 if ($TestMode -eq 'Remote') { Assert (Test-Path (Join-Path $fixture 'mcp-vps.json')) 'VPS MCP config missing' }
 if ($TestMode -eq 'Remote') { $first.Remote.managementVersion=2; Save-Config $first }

@@ -51,6 +51,13 @@ class CliTest(unittest.TestCase):
         server=json.loads(result.stdout)['mcpServers']['tacto-mcp']
         self.assertEqual(server,dict(command=str(driver),args=['mcp','--socket',r'\\.\pipe\tacto-test']))
         self.assertIn('Update the controlled PC',self.invoke('driver','--install-dir',self.folder,'call','get_screen_size','{}').stderr)
+        (self.folder/'Invoke-CuaBridge.ps1').write_text('# fixture')
+        config.write_text(json.dumps(dict(Phase='complete',DriverPath=str(driver),SocketPath=r'\\.\pipe\tacto-test',RuntimePath=str(self.folder),CliBridgeVersion=1)))
+        result=self.invoke('config','--install-dir',self.folder)
+        self.assertEqual(result.returncode,0,result.stderr)
+        server=json.loads(result.stdout)['mcpServers']['tacto-mcp']
+        self.assertEqual(Path(server['command']).name.lower(),'powershell.exe')
+        self.assertEqual(Path(server['env']['PSModulePath']),Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/Modules')
         config.write_text(json.dumps(dict(Phase='uninstalled')))
         self.assertNotEqual(self.invoke('config','--install-dir',self.folder).returncode,0)
     @unittest.skipUnless(os.name!='nt','Unix executable proxy')

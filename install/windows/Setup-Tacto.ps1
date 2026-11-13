@@ -25,6 +25,7 @@ param(
     [switch]$Unattended
 )
 $ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSEdition -eq 'Desktop') { $env:PSModulePath = [IO.Path]::Combine($PSHOME,'Modules') }
 [Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 Set-StrictMode -Version 2.0
@@ -77,13 +78,7 @@ function Invoke-Native([string]$Executable, [string[]]$Arguments) {
     if ($result.Code -ne 0) { throw "$Executable 执行失败，退出码 $($result.Code)" }
 }
 
-function Receive-File([string]$Uri, [string]$Path) {
-    $curl=Join-Path $env:WINDIR 'System32\curl.exe'
-    if (Test-Path -LiteralPath $curl) {
-        $result=Invoke-ProcessResult $curl @('--fail','--location','--silent','--show-error','--proto','=https','--proto-redir','=https','--connect-timeout','15','--max-time','120','--output',$Path,$Uri)
-        if ($result.Code -ne 0) { throw ('Download failed: ' + $result.Error.Trim()) }
-    } else { Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Path -TimeoutSec 120 }
-}
+. (Join-Path $PSScriptRoot 'Download.ps1')
 
 function Read-Setting([string]$Label, [string]$Value, [string]$Default) {
     if ($Value) { return $Value }
@@ -214,18 +209,7 @@ function Install-Cua($Config) {
     $bundled = Join-Path $script:PackageRoot ('vendor\cua-' + $release.version + '.zip')
     if (-not (Test-Path -LiteralPath $archive) -and (Test-Path -LiteralPath $bundled)) { Copy-Item -LiteralPath $bundled -Destination $archive }
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        if ((Test-Path -LiteralPath $archive) -and (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -eq $release.sha256) { break }
-        if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
-        $partial = $archive + '.partial'
-        try {
-            Write-Host ("Downloading verified CUA package (attempt $attempt/3)...")
-            Receive-File $release.url $partial
-            if ((Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash -ne $release.sha256) { throw 'CUA archive checksum mismatch' }
-            Move-Item -LiteralPath $partial -Destination $archive -Force
-        } catch { if ($attempt -eq 3) { throw }; Start-Sleep -Seconds $attempt }
-        finally { if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force } }
-    }
+    Receive-VerifiedArchive $release.url $archive $release.sha256
     Expand-Archive -LiteralPath $archive -DestinationPath $target -Force
     if (-not (Test-Path -LiteralPath $Config.DriverPath)) {
         $found = @(Get-ChildItem -LiteralPath $target -Filter cua-driver.exe -File -Recurse)
@@ -417,6 +401,9 @@ try {
     if ($Action -eq 'Uninstall' -and (Test-Path -LiteralPath $InstallDirectory)) {
         $lockFile = Join-Path $InstallDirectory '.lifecycle.lock'
         if (Test-Path -LiteralPath $lockFile) { Remove-Item -LiteralPath $lockFile -Force -ErrorAction SilentlyContinue }
-        if (@(Get-ChildItem -LiteralPath $InstallDirectory -Force).Count -eq 0) { Remove-Item -LiteralPath $InstallDirectory }
+        if (@(Get-ChildItem -LiteralPath $InstallDirectory -Force).Count -eq 0) {
+            try { Remove-Item -LiteralPath $InstallDirectory -ErrorAction Stop }
+            catch [System.IO.IOException] { Write-Warning "Owned services and files are removed; an application still holds the empty installation directory: $InstallDirectory" }
+        }
     }
 }

@@ -17,7 +17,8 @@ required = ['bin/tacto.mjs', 'src/cli.mjs', 'src/probe.mjs', 'install/windows/Se
             'resources/tacto-skill.md', 'src/driver-cli.mjs', 'src/skills.mjs',
             'resources/cua-skill/SKILL.md', 'resources/cua-skill/WINDOWS.md',
             'resources/cua-skill/source.json', 'resources/cua-skill/LICENSE',
-            'install/skill-references.json', 'scripts/Build-Skill.mjs', 'src/product.mjs']
+            'install/skill-references.json', 'scripts/Build-Skill.mjs', 'src/product.mjs',
+            'install/windows/Download.ps1']
 assert metadata['name'] == 'tacto-computer'
 assert metadata['bin'] == {'tacto-cli': 'bin/tacto.mjs'}
 assert metadata['tacto'] == {'skillName': 'tacto-computer', 'mcpName': 'tacto-mcp'}

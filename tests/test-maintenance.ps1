@@ -39,3 +39,13 @@ Write-AtomicJson (Join-Path $fixture 'connections\active.json') @{pid=$PID;start
 Assert ($LASTEXITCODE -eq 0) 'Idle updater failed to defer an active connection'
 Assert (-not (Test-Path -LiteralPath (Join-Path $fixture '.Tacto-temp\updates'))) 'Busy updater started downloading'
 Write-Host 'PASS: owned SSH settings, retained reinstall, edited settings protection, health validation'
+$locked=Join-Path $fixture 'occupied-empty-install'
+New-Item -ItemType Directory -Path $locked | Out-Null
+$previousDirectory=[Environment]::CurrentDirectory
+try {
+    [Environment]::CurrentDirectory=$locked
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repo 'install\windows\Setup-Tacto.ps1') -Action Uninstall -InstallDirectory $locked -Unattended
+    Assert ($LASTEXITCODE -eq 0) 'An occupied empty directory changed successful uninstall into failure'
+    Assert (Test-Path -LiteralPath $locked) 'Expected the held empty directory to remain'
+} finally { [Environment]::CurrentDirectory=$previousDirectory }
+Write-Host 'PASS: empty directory lock is reported after successful service cleanup'

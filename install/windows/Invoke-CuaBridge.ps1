@@ -1,5 +1,6 @@
 ﻿param([Parameter(Mandatory=$true)][string]$ConfigPath, [switch]$Local, [switch]$Cli)
 $ErrorActionPreference='Stop'
+if ($PSVersionTable.PSEdition -eq 'Desktop') { $env:PSModulePath=[IO.Path]::Combine($PSHOME,'Modules') }
 [Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $OutputEncoding=[Console]::OutputEncoding

@@ -38,10 +38,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-lifecycle.ps1 -Te
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-exports.ps1
 python tests/test-bridge.py
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-maintenance.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-download.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/test-skills.ps1
 ```
 
 安装测试为系统功能、计划任务和 VPS 通信提供隔离替身，实际执行密钥生成和后台启动器编译。CLI 转发测试通过进程替身检查安装入口和参数。目标电脑的首次安装与重启验收见 [验证记录](VERIFICATION.md)。
+
+`tests/process-env.test.mjs` 在 Windows 上使用已安装的 `pwsh` 构造 PowerShell 7 模块路径，再通过 Node 启动真实 Windows PowerShell 5.1，检查系统 cmdlet 是否正常解析。下载测试在网络进程边界注入中断，实际验证部分文件保留、后续续传、Range 拒绝降级和 SHA256 校验；真实官网续传及桌面操作证据见对应 history。
 
 ## Linux VPS 流程
 
@@ -60,14 +63,14 @@ python3 tests/test-vps.py
 ```sh
 node -e "require('node:fs').mkdirSync('.Tacto-temp',{recursive:true})"
 npm pack --pack-destination .Tacto-temp
-python tests/verify-package.py .Tacto-temp/tacto-computer-0.4.0.tgz
+python tests/verify-package.py .Tacto-temp/tacto-computer-0.4.1.tgz
 ```
 
 生成 Windows ZIP：
 
 ```powershell
 ./scripts/Package.ps1
-python tests/verify-package.py .Tacto-temp/packages/Tacto-0.4.0.zip
+python tests/verify-package.py .Tacto-temp/packages/Tacto-0.4.1.zip
 ```
 
 `Package.ps1 -CuaArchive <官方压缩包路径>` 将校验通过的原始 CUA 归档放入 ZIP 的 `vendor/`。打包程序保留源码目录结构；解压后的双击安装入口位于 `install/windows/`。
