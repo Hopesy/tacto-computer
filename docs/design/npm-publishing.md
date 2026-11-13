@@ -1,10 +1,10 @@
 # npm trusted publishing
 
-Prepared 2026-11-13 in response to the user's request to reduce repeated npm authorization. The selected implementation uses GitHub Actions OIDC with direct `npm publish`; the npm-side trust relationship still needs one-time setup.
+Active and verified 2026-11-13. The user requested fewer npm authorization steps and approved initialization. GitHub Actions OIDC with direct `npm publish` successfully published 0.4.0; the npm trust relationship is configured for `Hopesy/tacto-computer` / `publish.yml`. See [release evidence](../histories/2026-11-13-v0.4.0.md).
 
 ## One-time setup
 
-The package is `tacto-computer`, the executable is `tacto-cli`, and the repository is `Hopesy/tacto-computer`. At preparation time the npm registry returned 404 for the new package name. npm requires an existing package before configuring a trusted publisher, so initialize the new package through an authenticated first publish, then configure trust. Account 2FA must be enabled for the `npm trust` command.
+The package is `tacto-computer`, the executable is `tacto-cli`, and the repository is `Hopesy/tacto-computer`. Initial package creation and trust binding are complete. The following records the setup procedure for future recreation: npm requires an existing package before configuring a trusted publisher, so initialize a new package through an authenticated first publish, then configure trust. Account 2FA must be enabled for the `npm trust` command.
 
 After `.github/workflows/publish.yml` is committed and available on GitHub, run with npm 11.15.0 or newer:
 
@@ -37,6 +37,8 @@ Only stable version tags run publication. Pull requests and ordinary branch push
 
 CI is reused through `workflow_call` in `ci.yml`; the actual npm publish is in the top-level `publish.yml`, matching the trusted publisher filename. A successful real publish is the final OIDC verification. Local packing and static workflow checks validate preparation only.
 
-Preparation verification (2026-11-13): actionlint 1.7.12 passed for both workflow files. The tag/version gate passed with the current stable tag and rejected a branch name and mismatched version. Tooling artifacts are under `.Tacto-temp/npm-publishing/`. The workflow and documentation are local edits; npm trust and a real CI publication remain pending.
+Verification (2026-11-13): actionlint 1.7.12 passed for both workflows; the tag/version gate accepted a matching stable tag and rejected branch/mismatched tags. [Run 43382560793](https://github.com/Hopesy/tacto-computer/actions/runs/43382560793) passed Windows/Linux CI and published 0.4.0 via OIDC without interactive confirmation. Public tarball contents, integrity, provenance and fresh-cache CLI checks passed. Evidence is under `.Tacto-temp/npm-release/`.
+
+The npm 11.17 `trust` subcommand rejected a global `--cache` option placed before `trust`; using `npm_config_cache` and keeping `npm trust ...` at the start worked. A read-only `npm trust list` can itself prompt for account verification; the successful OIDC publish and its public provenance provide direct release evidence.
 
 Sources checked 2026-11-13: [Trusted publishing](https://docs.npmjs.com/trusted-publishers/), [npm trust](https://docs.npmjs.com/cli/v11/commands/npm-trust), [Staged publishing](https://docs.npmjs.com/staged-publishing/).

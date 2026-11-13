@@ -1,5 +1,7 @@
 # Single Skill entry and product naming
 
+Delivered in [Tacto Computer 0.4.0](2026-11-13-v0.4.0.md). The sections below retain the implementation checkpoints; npm trusted publishing and public verification are now complete.
+
 The user approved a single target-bound Skill entry after Codex discovered both `tacto-zhouh` and the nested upstream `cua-driver`. The implementation is a working-tree change on `bbabe83`; npm/release publication is separate follow-up work.
 
 - Installed layout: `SKILL.md` plus `references/`, with the upstream entry renamed to `CUA.md`, Skill frontmatter removed and document references updated.
