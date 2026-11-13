@@ -2,6 +2,8 @@
 
 Active and verified 2026-11-13. The user requested fewer npm authorization steps and approved initialization. GitHub Actions OIDC with direct `npm publish` successfully published 0.4.0; the npm trust relationship is configured for `Hopesy/tacto-computer` / `publish.yml`. See [release evidence](../histories/2026-11-13-v0.4.0.md).
 
+The subsequent [0.4.1 release](../histories/2026-11-13-v0.4.1.md) again passed Windows/Linux CI and OIDC publication without interactive authorization. npm registry processing took approximately 12 minutes; await public version/tag visibility and verify the published package before reporting public availability.
+
 ## One-time setup
 
 The package is `tacto-computer`, the executable is `tacto-cli`, and the repository is `Hopesy/tacto-computer`. Initial package creation and trust binding are complete. The following records the setup procedure for future recreation: npm requires an existing package before configuring a trusted publisher, so initialize a new package through an authenticated first publish, then configure trust. Account 2FA must be enabled for the `npm trust` command.

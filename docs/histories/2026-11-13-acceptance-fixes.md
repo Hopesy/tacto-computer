@@ -1,6 +1,6 @@
 # Installation and usability fixes after Claude Code acceptance
 
-Status: completed for the user's clarified scope; working-tree changes, not published. Baseline HEAD `86ef09e`, package metadata remains `tacto-computer@0.4.0`, official Driver remains 0.46.1.
+Status: completed for the user's clarified scope and subsequently published in [0.4.1](2026-11-13-v0.4.1.md). The pre-release evidence below used baseline HEAD `86ef09e` plus the working-tree fixes and package metadata `tacto-computer@0.4.0`; official Driver remains 0.46.1.
 
 The user first requested uninstalling the acceptance installation and repairing issues found by the tests. The final scope clarification on 2026-11-13 requires normal install/uninstall, discoverable Skill, working CLI/MCP connections and callable tools. Computer Use task effectiveness is outside this acceptance scope. The ongoing effect test was stopped, its visible test terminals closed, and the new isolated installation removed.
 

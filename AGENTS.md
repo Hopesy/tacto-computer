@@ -1,6 +1,6 @@
 # Tacto development
 
-- Read the latest [release history](docs/histories/2026-11-13-v0.4.0.md), check `docs/exec-plans/active/` for newer work, then inspect Git state and the relevant code.
+- Read the latest [release history](docs/histories/2026-11-13-v0.4.1.md), check `docs/exec-plans/active/` for newer work, then inspect Git state and the relevant code.
 - Keep runtime resources under `install/`, CLI code under `src/`, and test artifacts/scripts under `.Tacto-temp/`.
 - Preserve UTF-8 BOM in Windows PowerShell scripts: the supported runtime is Windows PowerShell 5.1.
 - Preserve other installations, user SSH keys and unrelated MCP entries. Exercise destructive lifecycle scenarios only in isolated installations.

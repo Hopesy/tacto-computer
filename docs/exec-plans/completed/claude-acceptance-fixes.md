@@ -1,6 +1,6 @@
 # Fixes from Claude Code acceptance
 
-Status: complete for the user's clarified scope, 2026-11-13. Source baseline: HEAD `86ef09e`, public package 0.4.0; repairs remain in the working tree and are not published.
+Status: complete for the user's clarified scope, 2026-11-13. Source baseline: HEAD `86ef09e`, public package 0.4.0. The repairs were subsequently published in [0.4.1](../../histories/2026-11-13-v0.4.1.md) after the user's continuation.
 
 The original instruction was to uninstall first and repair the observed failures. The user's latest clarification supersedes the edit/save completion criterion: test whether the product can be used, installs and uninstalls normally; Computer Use task effectiveness does not need investigation. Preserve other installations, user keys, unrelated client entries and test evidence. Windows scripts retain UTF-8 BOM and PowerShell 5.1 compatibility.
 
