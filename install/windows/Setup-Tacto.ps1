@@ -240,6 +240,10 @@ function Invoke-Vps($Config, [string]$RemoteAction, [switch]$Bootstrap, [switch]
     if ($CoreOnly) { $request.healthScope='activation' }
     if ($Bootstrap -or $RemoteAction -eq 'configure') {
         $request.skillFiles=Get-TargetSkillFiles $Config '{{VPS_CLI}}'
+        $product=Get-TargetProduct $Config
+        $request.mcpName=$product.mcpName
+        $request.skillName=$product.skillName
+        $request.cliPrefix="npx -y --package $($product.packageName)@latest $($product.cliName) driver"
     }
     if ($RemoteAction -eq 'remove') { $request.purge = $true }
     if ($Bootstrap) {

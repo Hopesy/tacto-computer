@@ -15,6 +15,10 @@ import sys
 import time
 
 
+# Include the previous layout so older runtimes can still roll back and remove files.
+SKILL_PATH = re.compile(r'SKILL\.md|(?:official|references)/[A-Za-z0-9_.-]+')
+
+
 def run(args, data=None, timeout=45):
     result = subprocess.run(args, input=data, text=True, capture_output=True, timeout=timeout)
     if result.returncode:
@@ -68,6 +72,7 @@ def allocate_port(root, device, requested):
 
 
 def prepare(request, root, folder, auth):
+    mcp_name, _ = target_names(request)
     state_path = folder / 'state.json'
     previous = json.loads(state_path.read_text()) if state_path.exists() else None
     if previous and not previous.get('removed') and previous['clientId'] != request['clientId']:
@@ -99,7 +104,7 @@ def prepare(request, root, folder, auth):
         write(folder / 'setup-vps.py', source, 0o700)
     state = dict(device=request['device'], clientId=request['clientId'], reversePort=port,
                  windowsKey=callback_key, driverPath=driver, vpsUser=run(['id', '-un']),
-                 mcpName='computer-' + request['device'], managementVersion=2)
+                 mcpName=mcp_name, managementVersion=3)
     if request.get('skillText') or request.get('skillFiles'):
         install_skill(folder, skill_files(request, folder))
     control = 'python3 %s --managed' % shlex.quote(str(folder / 'setup-vps.py'))
@@ -187,6 +192,14 @@ def check(state, folder, core_only=False):
     return {'connected': True, 'status': 'Windows MCP health verified', 'health': health}
 
 
+def target_names(request):
+    legacy = ('computer-' + request['device'], 'tacto-' + request['device'])
+    names = (request.get('mcpName', legacy[0]), request.get('skillName', legacy[1]))
+    if names not in (legacy, ('tacto-mcp', 'tacto-computer')):
+        raise ValueError('Invalid target naming contract.')
+    return names
+
+
 def skill_files(request, folder):
     files = request.get('skillFiles', {'SKILL.md': request.get('skillText')})
     if not isinstance(files, dict) or 'SKILL.md' not in files or len(files) > 64:
@@ -194,9 +207,9 @@ def skill_files(request, folder):
     if sum(len(value.encode('utf-8')) for value in files.values() if isinstance(value, str)) > 2 * 1024 * 1024:
         raise ValueError('Skill pack exceeds 2 MiB.')
     for name, value in files.items():
-        if not re.fullmatch(r'SKILL\.md|official/[A-Za-z0-9_.-]+', name) or not isinstance(value, str):
+        if not SKILL_PATH.fullmatch(name) or not isinstance(value, str):
             raise ValueError('Invalid Skill file.')
-    prefix = 'npx -y tacto-mcp@latest driver --proxy ' + shlex.quote(str(folder / 'cua-proxy'))
+    prefix = request.get('cliPrefix', 'npx -y tacto-mcp@latest driver') + ' --proxy ' + shlex.quote(str(folder / 'cua-proxy'))
     return {name: value.replace('{{VPS_CLI}}', prefix) if name == 'SKILL.md' else value for name, value in files.items()}
 
 
@@ -204,12 +217,13 @@ def install_skill(folder, files):
     manifest = folder / 'skill-manifest.json'
     previous = json.loads(manifest.read_text()) if manifest.exists() else ['SKILL.md']
     for name in previous:
-        if not re.fullmatch(r'SKILL\.md|official/[A-Za-z0-9_.-]+', name):
+        if not SKILL_PATH.fullmatch(name):
             raise ValueError('Invalid Skill manifest path.')
     for name, value in files.items():
         write(folder / 'skill' / name, value)
     for name in set(previous) - set(files):
         (folder / 'skill' / name).unlink(missing_ok=True)
+    prune_skill([dict(root=str(folder / 'skill'), path=str(folder / 'skill' / name)) for name in previous])
     write(manifest, json.dumps(list(files)))
 
 
@@ -220,7 +234,8 @@ def integration_files(record, device):
     for file in files:
         root, path = Path(file['root']), Path(file['path'])
         name = path.relative_to(root).as_posix()
-        if root.name != 'tacto-' + device or not re.fullmatch(r'SKILL\.md|official/[A-Za-z0-9_.-]+', name):
+        expected_root = 'tacto-computer' if record['name'] == 'tacto-mcp' else 'tacto-' + device
+        if root.name != expected_root or not SKILL_PATH.fullmatch(name):
             raise ValueError('Invalid integration path.')
     return files
 
@@ -232,7 +247,7 @@ def prune_skill(files):
             directory.rmdir()
 
 
-def reconcile_integrations(folder, state, replacement_skill=None):
+def reconcile_integrations(folder, state, replacement_skill=None, replacement_names=None):
     registry = folder / 'agent-integrations.json'
     preserved = []
     if not registry.exists():
@@ -253,12 +268,12 @@ def reconcile_integrations(folder, state, replacement_skill=None):
             record = json.loads(receipt.read_text())
             config = Path(record['config'])
             expected_receipt = str(config) + '.tacto-' + state['device'] + '.json'
-            if str(receipt) != expected_receipt or record['name'] != state['mcpName'] or record['server'] != state['mcp']:
+            if str(receipt) != expected_receipt or record['name'] not in ('tacto-mcp', 'computer-' + state['device']) or record.get('device', state['device']) != state['device'] or record['server'] != state['mcp']:
                 raise ValueError('Integration identity mismatch')
             files = integration_files(record, state['device'])
             desired = []
             if replacement_skill is not None:
-                for root in {file['root'] for file in files}:
+                for root in {str(Path(file['root']).parent / replacement_names[1]) for file in files}:
                     desired.extend(dict(root=root, path=str(Path(root) / name), hash=hashlib.sha256(text.encode('utf-8')).hexdigest(), text=text) for name, text in replacement_skill.items())
             old = {file['path']: file for file in files}
             conflicts = []
@@ -281,6 +296,18 @@ def reconcile_integrations(folder, state, replacement_skill=None):
                     write(config, json.dumps(document, indent=2) + '\n')
                 elif entry is not None and entry != record['server']:
                     preserved.append(str(config)); edited = True
+                    if replacement_skill is not None:
+                        continue
+                if replacement_skill is not None:
+                    name = replacement_names[0]
+                    existing = document.get('mcpServers', {}).get(name)
+                    if name != record['name'] and existing is not None:
+                        preserved.append(str(config))
+                        continue
+                    if entry is not None:
+                        del document['mcpServers'][record['name']]
+                        document['mcpServers'][name] = record['server']
+                        write(config, json.dumps(document, indent=2) + '\n')
             desired_paths = {file['path'] for file in desired}
             for file in files:
                 path = Path(file['path'])
@@ -295,6 +322,9 @@ def reconcile_integrations(folder, state, replacement_skill=None):
                     receipt.unlink()
             else:
                 record['schema'] = 2
+                record['device'] = state['device']
+                record['name'] = replacement_names[0]
+                record['skill'] = next((file['path'] for file in desired if Path(file['path']) == Path(file['root']) / 'SKILL.md'), None)
                 record['files'] = [{key: value for key, value in file.items() if key != 'text'} for file in desired]
                 record['skillHash'] = hashlib.sha256(replacement_skill['SKILL.md'].encode('utf-8')).hexdigest() if record.get('skill') else None
                 write(receipt, json.dumps(record, indent=2) + '\n')
@@ -331,9 +361,13 @@ def execute(request, home=None):
         if request['action'] == 'check':
             return check(state, folder, core_only=request.get('healthScope') == 'activation')
         if request['action'] == 'configure':
+            names = target_names(request)
             files = skill_files(request, folder)
             install_skill(folder, files)
-            preserved = reconcile_integrations(folder, state, replacement_skill=files)
+            preserved = reconcile_integrations(folder, state, replacement_skill=files, replacement_names=names)
+            state['mcpName'] = names[0]
+            write(folder / 'state.json', json.dumps(state, indent=2) + '\n')
+            write(folder / 'mcp.json', json.dumps({'mcpServers': {names[0]: state['mcp']}}, indent=2) + '\n')
             return {'configured': True, 'preservedIntegrations': preserved}
         if request['action'] == 'remove':
             preserved = reconcile_integrations(folder, state)

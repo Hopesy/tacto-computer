@@ -11,7 +11,7 @@ $log=Join-Path $cache 'last-update.json'
 try {
     [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
     $releaseFile=Join-Path $cache 'release.json'
-    Receive-File 'https://api.github.com/repos/Hopesy/tacto-mcp/releases/latest' $releaseFile
+    Receive-File 'https://api.github.com/repos/Hopesy/tacto-computer/releases/latest' $releaseFile
     $release=Get-Content -LiteralPath $releaseFile -Raw -Encoding UTF8 | ConvertFrom-Json
     $version=$release.tag_name -replace '^v',''
     if ($version -notmatch '^\d+\.\d+\.\d+$' -or [version]$version -le [version]$config.TactoVersion) { exit 0 }
@@ -20,7 +20,7 @@ try {
     $hashAsset=@($release.assets | Where-Object { $_.name -eq ($name + '.sha256') })
     if ($zipAsset.Count -ne 1 -or $hashAsset.Count -ne 1) { throw 'The published release is missing its Windows package or checksum.' }
     foreach ($asset in @($zipAsset[0],$hashAsset[0])) {
-        if (-not $asset.browser_download_url.StartsWith('https://github.com/Hopesy/tacto-mcp/releases/download/')) { throw 'Unexpected release download source.' }
+        if (-not $asset.browser_download_url.StartsWith('https://github.com/Hopesy/tacto-computer/releases/download/')) { throw 'Unexpected release download source.' }
     }
     $zip=Join-Path $cache $name
     Receive-File $hashAsset[0].browser_download_url ($zip + '.sha256')

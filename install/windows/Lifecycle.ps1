@@ -161,8 +161,9 @@ function Register-Uninstaller($Config) {
 function Export-Connections($Config) {
     $powershell = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
     $server = @{command=$powershell;args=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $InstallDirectory 'Invoke-CuaBridge.ps1'),'-ConfigPath',$script:ConfigPath,'-Local')}
-    Write-AtomicJson (Join-Path $InstallDirectory 'mcp-local.json') @{mcpServers=@{('computer-' + $Config.DeviceName)=$server}}
-    if ($Config.Mode -eq 'Remote') { Write-AtomicJson (Join-Path $InstallDirectory 'mcp-vps.json') @{mcpServers=@{('computer-' + $Config.DeviceName)=$Config.Remote.mcp}} }
+    $name=(Get-TargetProduct $Config).mcpName
+    Write-AtomicJson (Join-Path $InstallDirectory 'mcp-local.json') @{mcpServers=@{$name=$server}}
+    if ($Config.Mode -eq 'Remote') { Write-AtomicJson (Join-Path $InstallDirectory 'mcp-vps.json') @{mcpServers=@{$name=$Config.Remote.mcp}} }
     Install-TargetSkill $Config
     return $server
 }
@@ -277,7 +278,7 @@ function Install-Desktop {
             $known = Join-Path $env:USERPROFILE '.ssh\known_hosts'
             if (Test-Path -LiteralPath $known) { Copy-Item -LiteralPath $known -Destination $config.KnownHostsFile }
         }
-        if (-not $config.Remote -or (Property $config.Remote 'managementVersion' 0) -lt 2) {
+        if (-not $config.Remote -or (Property $config.Remote 'managementVersion' 0) -lt 3) {
             $config.Remote = Invoke-Vps $config 'prepare' -Bootstrap
             $config.ReversePort = $config.Remote.reversePort
             Set-Property $config 'RemoteCleanupComplete' $false
@@ -390,7 +391,7 @@ function Uninstall-Desktop {
         New-Item -ItemType Directory -Force $receiptFolder | Out-Null
         $receipt = Join-Path $receiptFolder ($config.ClientId + '.json')
         $proxy = Property $config.Remote 'mcp'
-        Write-AtomicJson $receipt @{schema=1;device=$config.DeviceName;clientId=$config.ClientId;host=$config.VpsHost;user=$config.VpsUser;port=$config.VpsPort;proxy=(Property $proxy 'command');error=$pending;action='Sign in to the VPS and run tacto-mcp cleanup --receipt <this file> on an SSH-capable Agent host.'}
+        Write-AtomicJson $receipt @{schema=1;device=$config.DeviceName;clientId=$config.ClientId;host=$config.VpsHost;user=$config.VpsUser;port=$config.VpsPort;proxy=(Property $proxy 'command');error=$pending;action='Sign in to the VPS and run tacto-cli cleanup --receipt <this file> on an SSH-capable Agent host.'}
         $script:PendingRemote = $receipt
         Write-Warning "Local cleanup continues. Remote cleanup receipt: $receipt"
     }

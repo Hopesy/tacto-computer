@@ -4,6 +4,8 @@
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+& node (Join-Path $projectRoot 'scripts\Build-Skill.mjs') --check
+if ($LASTEXITCODE) { throw 'Skill reference bundle validation failed.' }
 $metadata = Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $version = $metadata.version
 $output = [IO.Path]::GetFullPath($OutputDirectory)

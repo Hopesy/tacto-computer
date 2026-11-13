@@ -6,23 +6,23 @@ import {fileURLToPath} from 'node:url';
 import {childEnvironment} from './process-env.mjs';
 import {connectAgent, disconnectAgent, cleanupRemote} from './integration.mjs';
 import {driverCommand} from './driver-cli.mjs';
+import {metadata, mcpName} from './product.mjs';
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const metadata = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
-const help = `Tacto ${metadata.version} — Computer Use MCP
+const help = `Tacto ${metadata.version} — Computer Use CLI + MCP
 
-  tacto-mcp setup --local [--unattended]
-  tacto-mcp setup --remote --vps-host HOST --vps-user USER [--identity-file PATH]
-  tacto-mcp update|rollback|check|uninstall [--install-dir PATH] [--unattended]
-  tacto-mcp mcp [--install-dir PATH]
-  tacto-mcp driver call TOOL [JSON] [connection options] [--screenshot-out-file PATH]
-  tacto-mcp driver list-tools|describe TOOL|doctor|status|--version [connection options]
-  tacto-mcp mcp --proxy /absolute/path/cua-proxy [--ssh HOST] [--ssh-config PATH]
-  tacto-mcp config [connection options] [--output PATH] [--force]
-  tacto-mcp probe MCP_CONFIG_JSON [SERVER_NAME] [--health] [--smoke]
-  tacto-mcp connect [connection options] --mcp-config PATH [--skill-dir PATH | --no-skills] --device-name NAME
-  tacto-mcp disconnect --mcp-config PATH --device-name NAME
-  tacto-mcp cleanup --receipt PATH [--identity-file PATH]
+  tacto-cli setup --local [--unattended]
+  tacto-cli setup --remote --vps-host HOST --vps-user USER [--identity-file PATH]
+  tacto-cli update|rollback|check|uninstall [--install-dir PATH] [--unattended]
+  tacto-cli mcp [--install-dir PATH]
+  tacto-cli driver call TOOL [JSON] [connection options] [--screenshot-out-file PATH]
+  tacto-cli driver list-tools|describe TOOL|doctor|status|--version [connection options]
+  tacto-cli mcp --proxy /absolute/path/cua-proxy [--ssh HOST] [--ssh-config PATH]
+  tacto-cli config [connection options] [--output PATH] [--force]
+  tacto-cli probe MCP_CONFIG_JSON [SERVER_NAME] [--health] [--smoke]
+  tacto-cli connect [connection options] --mcp-config PATH [--skill-dir PATH | --no-skills] --device-name NAME
+  tacto-cli disconnect --mcp-config PATH --device-name NAME
+  tacto-cli cleanup --receipt PATH [--identity-file PATH]
 
 The default command is mcp. Setup runs explicitly on the controlled Windows PC.
 Setup options: --device-name, --vps-port, --reverse-port, --local-ssh-port,
@@ -99,10 +99,10 @@ async function connection(options, mode='mcp') {
   let config;
   try { config = JSON.parse((await readFile(path, 'utf8')).replace(/^\uFEFF/, '')); }
   catch (error) {
-    if (error.code === 'ENOENT') throw new Error('Set up this Windows PC first: npx -y tacto-mcp setup --local');
+    if (error.code === 'ENOENT') throw new Error('Set up this Windows PC first: npx -y --package tacto-computer@latest tacto-cli setup --local');
     throw new Error(`Could not read the Tacto installation config: ${path}`);
   }
-  if (config.Phase !== 'complete') throw new Error('Complete or repair the installation with: npx -y tacto-mcp update');
+  if (config.Phase !== 'complete') throw new Error('Complete or repair the installation with: npx -y --package tacto-computer@latest tacto-cli update');
   if (typeof config.SocketPath !== 'string' || !config.SocketPath.startsWith('\\\\.\\pipe\\')) throw new Error('The installation has an invalid CUA pipe');
   if (typeof config.DriverPath !== 'string' || !isAbsolute(config.DriverPath)) throw new Error('The installation has an invalid CUA executable path');
   if (mode==='cli' && (!config.RuntimePath || config.CliBridgeVersion !== 1)) throw new Error('Update the controlled PC to enable the Tacto CLI bridge');
@@ -146,7 +146,7 @@ async function main() {
   if (command==='driver') return driverCommand(args,connection);
   if (command==='call') return driverCommand(['call',...args],connection);
   if (command === 'probe') {
-    if (args.length < 1 || args.length > 4) throw new Error('Usage: tacto-mcp probe MCP_CONFIG_JSON [SERVER_NAME]');
+    if (args.length < 1 || args.length > 4) throw new Error('Usage: tacto-cli probe MCP_CONFIG_JSON [SERVER_NAME]');
     return run(process.execPath, [join(packageRoot, 'src', 'probe.mjs'), await file(args[0]), ...args.slice(1)]);
   }
   if (['setup', 'update', 'rollback', 'check', 'uninstall'].includes(command)) {
@@ -170,7 +170,7 @@ async function main() {
     const options = parse(args, new Set([...connectionOptions, ...(command === 'config' ? ['output', 'force'] : [])]));
     const server = await connection(options);
     if (command === 'mcp') return run(server.command, server.args);
-    const json = JSON.stringify({mcpServers: {tacto: server}}, null, 2) + '\n';
+    const json = JSON.stringify({mcpServers: {[mcpName]: server}}, null, 2) + '\n';
     if (options.output) {
       const output = resolve(options.output);
       await mkdir(dirname(output), {recursive: true});
@@ -179,7 +179,7 @@ async function main() {
     } else console.log(json.trimEnd());
     return 0;
   }
-  throw new Error(`Unknown command: ${command}. Use tacto-mcp --help`);
+  throw new Error(`Unknown command: ${command}. Use tacto-cli --help`);
 }
 
 try { process.exitCode = await main(); }

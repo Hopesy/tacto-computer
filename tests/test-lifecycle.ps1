@@ -32,7 +32,7 @@ function Invoke-Vps($Config,$RemoteAction,[switch]$Bootstrap) {
     if ($script:offline) { throw 'Injected VPS offline' }; $script:remoteActions += $RemoteAction
     $script:clientIds += $Config.ClientId
     switch ($RemoteAction) {
-        'prepare' { [pscustomobject]@{managementVersion=2;reversePort=22227;windowsKey='ssh-ed25519 AQID callback';mcpName='computer-lifecycle-pc';mcp=@{command='/fixture/cua-proxy';args=@()}} }
+        'prepare' { [pscustomobject]@{managementVersion=3;reversePort=22227;windowsKey='ssh-ed25519 AQID callback';mcpName='tacto-mcp';mcp=@{command='/fixture/cua-proxy';args=@()}} }
         'check' { [pscustomobject]@{status='MCP healthy';health=(Invoke-McpHealth $Config)} }
         'remove' { [pscustomobject]@{removed=$true} }
     }
@@ -64,10 +64,15 @@ Assert ($first.Phase -eq 'complete') 'Initial install incomplete'
 if ($TestMode -eq 'Remote') { Assert (Test-Path (Join-Path $fixture 'keys\tunnel.pub')) 'Real SSH key generation failed' }
 Assert (Test-Path (Join-Path $fixture 'mcp-local.json')) 'Local MCP config missing'
 $exported = Get-Content (Join-Path $fixture 'mcp-local.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-Assert ($exported.mcpServers.'computer-lifecycle-pc'.args -contains $script:ConfigPath) 'Export must use stable installation bridge'
+Assert ($exported.mcpServers.'tacto-mcp'.args -contains $script:ConfigPath) 'Export must use stable installation bridge'
 Assert ($first.SocketPath -ne '\\.\pipe\cua-driver') 'Install reused global pipe'
 if ($TestMode -eq 'Remote') { Assert (Test-Path (Join-Path $fixture 'mcp-vps.json')) 'VPS MCP config missing' }
+if ($TestMode -eq 'Remote') { $first.Remote.managementVersion=2; Save-Config $first }
 Install-Desktop
+if ($TestMode -eq 'Remote') {
+    Assert ((Get-Config).Remote.managementVersion -eq 3) 'Existing VPS helper did not gain reference-layout support'
+    Assert (@($script:remoteActions | Where-Object { $_ -eq 'prepare' }).Count -eq 2) 'Existing helper upgrade did not bootstrap exactly once'
+}
 Assert ((Get-Config).ClientId -eq $first.ClientId) 'Update changed installation identity'
 Assert ((Get-Config).SocketPath -eq $first.SocketPath) 'Update changed daemon pipe'
 Assert ($script:tasks.Count -eq $(if ($TestMode -eq 'Local') { 1 } else { 2 })) 'Wrong task count after update'

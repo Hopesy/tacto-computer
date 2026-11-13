@@ -2,6 +2,7 @@ import {readFile, stat} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {homedir} from 'node:os';
 import {createHash} from 'node:crypto';
+import {metadata, cliName, skillName, mcpName} from './product.mjs';
 
 export const hash = text => createHash('sha256').update(text).digest('hex');
 export async function detectSkillDirectories(home=homedir(), env=process.env) {
@@ -25,18 +26,11 @@ export function cliPrefix(options, platform=process.platform) {
   const quote=value=>platform==='win32' ? `'${value.replaceAll("'","''")}'` : `'${value.replaceAll("'", "'\"'\"'")}'`;
   const args=[];
   for (const key of ['install-dir','proxy','ssh','ssh-config']) if (options[key]) args.push(`--${key}`,quote(options[key]));
-  return `${platform==='win32'?'npx.cmd':'npx'} -y tacto-mcp@latest driver${args.length?' '+args.join(' '):''}`;
+  return `${platform==='win32'?'npx.cmd':'npx'} -y --package ${metadata.name}@latest ${cliName} driver${args.length?' '+args.join(' '):''}`;
 }
 export async function skillFiles(packageRoot, device, browser, prefix) {
   const template=await readFile(join(packageRoot,'resources','tacto-skill.md'),'utf8');
-  const files={'SKILL.md':template.replaceAll('{{DEVICE}}',device).replaceAll('{{SERVER}}',`computer-${device}`).replaceAll('{{BROWSER}}',browser).replaceAll('{{CLI}}',prefix)};
-  const folder=join(packageRoot,'resources','cua-skill');
-  const manifest=JSON.parse(await readFile(join(folder,'source.json'),'utf8'));
-  for (const name of [...Object.keys(manifest.files),'source.json','LICENSE']) {
-    if (!/^[A-Za-z0-9_.-]+$/.test(name)) throw new Error('Invalid official Skill filename');
-    const content=await readFile(join(folder,name),'utf8');
-    if (manifest.files[name] && hash(content)!==manifest.files[name]) throw new Error(`Official Skill checksum mismatch: ${name}`);
-    files[`official/${name}`]=content;
-  }
-  return files;
+  const files={'SKILL.md':template.replaceAll('{{SKILL}}',skillName).replaceAll('{{DEVICE}}',device).replaceAll('{{SERVER}}',mcpName).replaceAll('{{BROWSER}}',browser).replaceAll('{{CLI}}',prefix)};
+  const references=JSON.parse(await readFile(join(packageRoot,'install','skill-references.json'),'utf8'));
+  return {...files,...references};
 }

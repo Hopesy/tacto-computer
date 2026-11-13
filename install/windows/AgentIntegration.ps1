@@ -3,10 +3,23 @@
     try { return ([BitConverter]::ToString($sha.ComputeHash($script:Utf8.GetBytes($Text)))).Replace('-','').ToLower() }
     finally { $sha.Dispose() }
 }
+function Get-TargetProduct($Config) {
+    $metadata=Get-Content -LiteralPath (Join-Path $Config.RuntimePath 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (Property $metadata 'tacto') { return @{packageName=$metadata.name;cliName=@($metadata.bin.PSObject.Properties.Name)[0];skillName=$metadata.tacto.skillName;mcpName=$metadata.tacto.mcpName} }
+    return @{packageName='tacto-mcp';cliName='tacto-mcp';skillName=('tacto-' + $Config.DeviceName);mcpName=('computer-' + $Config.DeviceName)}
+}
 function Get-TargetSkillFiles($Config, [string]$CliPrefix) {
-    if (-not $CliPrefix) { $CliPrefix="npx.cmd -y tacto-mcp@latest driver --install-dir '" + $InstallDirectory.Replace("'","''") + "'" }
+    $product=Get-TargetProduct $Config
+    if (-not $CliPrefix) { $CliPrefix="npx.cmd -y --package $($product.packageName)@latest $($product.cliName) driver --install-dir '" + $InstallDirectory.Replace("'","''") + "'" }
     $template=Get-Content -LiteralPath (Join-Path $Config.RuntimePath 'resources\tacto-skill.md') -Raw -Encoding UTF8
-    $files=@{'SKILL.md'=$template.Replace('{{SERVER}}',('computer-' + $Config.DeviceName)).Replace('{{DEVICE}}',$Config.DeviceName).Replace('{{BROWSER}}',(Property $Config 'BrowserMode' 'isolated')).Replace('{{CLI}}',$CliPrefix)}
+    $files=@{'SKILL.md'=$template.Replace('{{SKILL}}',$product.skillName).Replace('{{SERVER}}',$product.mcpName).Replace('{{DEVICE}}',$Config.DeviceName).Replace('{{BROWSER}}',(Property $Config 'BrowserMode' 'isolated')).Replace('{{CLI}}',$CliPrefix)}
+    $bundle=Join-Path $Config.RuntimePath 'install\skill-references.json'
+    if (Test-Path -LiteralPath $bundle) {
+        $references=[IO.File]::ReadAllText($bundle,[Text.Encoding]::UTF8) | ConvertFrom-Json
+        foreach ($entry in $references.PSObject.Properties) { $files[$entry.Name]=[string]$entry.Value }
+        return $files
+    }
+    # Previous runtimes keep their original layout during rollback.
     $folder=Join-Path $Config.RuntimePath 'resources\cua-skill'
     if (Test-Path -LiteralPath $folder) {
         $manifest=Get-Content -LiteralPath (Join-Path $folder 'source.json') -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -52,7 +65,8 @@ function Get-IntegrationFiles($Record) {
     foreach ($file in $files) {
         $prefix=[IO.Path]::GetFullPath($file.root).TrimEnd('\') + '\'
         $path=[IO.Path]::GetFullPath($file.path)
-        if ((Split-Path $file.root -Leaf) -ne $Record.name.Replace('computer-','tacto-') -or -not $path.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) -or $path.Substring($prefix.Length) -notmatch '^(SKILL\.md|official[\\/][A-Za-z0-9_.-]+)$') { throw 'Invalid Skill ownership path.' }
+        $expectedRoot=if ($Record.name -eq 'tacto-mcp') { 'tacto-computer' } else { $Record.name.Replace('computer-','tacto-') }
+        if ((Split-Path $file.root -Leaf) -ne $expectedRoot -or -not $path.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) -or $path.Substring($prefix.Length) -notmatch '^(SKILL\.md|(official|references)[\\/][A-Za-z0-9_.-]+)$') { throw 'Invalid Skill ownership path.' }
     }
     return $files
 }
@@ -63,7 +77,8 @@ function Remove-EmptySkillDirectories($Files) {
     }
 }
 function Set-AgentIntegration($Config, $Server) {
-    $name='computer-' + $Config.DeviceName
+    $product=Get-TargetProduct $Config
+    $name=$product.mcpName
     $configPath=Property $Config 'McpConfig'
     $previous=Property $Config 'Integration'
     $oldFiles=@(Get-IntegrationFiles $previous)
@@ -77,7 +92,7 @@ function Set-AgentIntegration($Config, $Server) {
     $files=@(); $texts=@{}; $oldMap=@{}; $backups=@{}
     foreach ($file in $oldFiles) { $oldMap[$file.path]=$file.hash }
     foreach ($directory in $directories) {
-        $folder=Join-Path $directory ('tacto-' + $Config.DeviceName)
+        $folder=Join-Path $directory $product.skillName
         foreach ($entry in $content.GetEnumerator()) {
             $path=Join-Path $folder $entry.Key
             $files+=[pscustomobject]@{path=$path;hash=(Get-TextHash $entry.Value);root=$folder}
@@ -90,7 +105,7 @@ function Set-AgentIntegration($Config, $Server) {
         if ($null -ne $original -and (Get-TextHash $original) -ne $oldMap[$file.path]) { throw 'The target Skill was edited. Preserve or relocate it before updating.' }
         $backups[$file.path]=$original
     }
-    $record=[pscustomobject]@{name=$name;configPath=$configPath;server=$Server;skillPath=$null;skillHash=$null;files=$files}
+    $record=[pscustomobject]@{name=$name;device=$Config.DeviceName;configPath=$configPath;server=$Server;skillPath=$null;skillHash=$null;files=$files}
     $entryFile=@($files | Where-Object { (Split-Path $_.path -Leaf) -eq 'SKILL.md' -and (Split-Path $_.path) -eq $_.root })
     if ($entryFile.Count) { $record.skillPath=$entryFile[0].path; $record.skillHash=$entryFile[0].hash }
     try {
@@ -99,7 +114,12 @@ function Set-AgentIntegration($Config, $Server) {
             $document=if ($original) { $original | ConvertFrom-Json } else { [pscustomobject]@{} }
             if (-not (Property $document 'mcpServers')) { Set-Property $document 'mcpServers' ([pscustomobject]@{}) }
             $entry=Property $document.mcpServers $name
-            if ($entry -and (-not $previous -or ($entry | ConvertTo-Json -Depth 20 -Compress) -ne ($previous.server | ConvertTo-Json -Depth 20 -Compress))) { throw "MCP entry $name already exists or was edited. Choose a different device name or merge it manually." }
+            if ($entry -and (-not $previous -or $previous.name -ne $name -or ($entry | ConvertTo-Json -Depth 20 -Compress) -ne ($previous.server | ConvertTo-Json -Depth 20 -Compress))) { throw "MCP entry $name already exists or was edited. Preserve it or select another client config." }
+            if ($previous -and $previous.name -ne $name) {
+                $oldEntry=Property $document.mcpServers $previous.name
+                if ($oldEntry -and ($oldEntry | ConvertTo-Json -Depth 20 -Compress) -ne ($previous.server | ConvertTo-Json -Depth 20 -Compress)) { throw "MCP entry $($previous.name) was edited. Preserve it before updating." }
+                $document.mcpServers.PSObject.Properties.Remove($previous.name)
+            }
             $backups[$configPath]=$original
             New-Item -ItemType Directory -Force (Split-Path $configPath) | Out-Null
             Set-Property $document.mcpServers $name $Server

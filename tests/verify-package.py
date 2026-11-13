@@ -16,7 +16,11 @@ required = ['bin/tacto.mjs', 'src/cli.mjs', 'src/probe.mjs', 'install/windows/Se
             'install/windows/AgentIntegration.ps1', 'install/windows/Update-Available.ps1',
             'resources/tacto-skill.md', 'src/driver-cli.mjs', 'src/skills.mjs',
             'resources/cua-skill/SKILL.md', 'resources/cua-skill/WINDOWS.md',
-            'resources/cua-skill/source.json', 'resources/cua-skill/LICENSE']
+            'resources/cua-skill/source.json', 'resources/cua-skill/LICENSE',
+            'install/skill-references.json', 'scripts/Build-Skill.mjs', 'src/product.mjs']
+assert metadata['name'] == 'tacto-computer'
+assert metadata['bin'] == {'tacto-cli': 'bin/tacto.mjs'}
+assert metadata['tacto'] == {'skillName': 'tacto-computer', 'mcpName': 'tacto-mcp'}
 if len(sys.argv) > 1:
     archive = Path(sys.argv[1])
     if archive.suffix == '.tgz':

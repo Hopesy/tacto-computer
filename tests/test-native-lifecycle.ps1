@@ -44,8 +44,9 @@ try {
     Assert (@(Get-ChildItem (Join-Path $install 'cli-sessions') -Filter '*.json').Count -eq 0) 'CLI idle lease remains'
     & node $cli driver --install-dir $install call get_screen_size '{}' *> (Join-Path $root 'cli-screen-size.json')
     Assert ($LASTEXITCODE -eq 0) 'CLI read-only screen-size call failed'
-    $official=Join-Path $skills ('tacto-' + $device + '\official\WINDOWS.md')
-    Assert ((Get-FileHash $official).Hash -eq (Get-FileHash (Join-Path $repo 'resources\cua-skill\WINDOWS.md')).Hash) 'Official Skill content changed'
+    $official=Join-Path $skills 'tacto-computer\references\BROWSER.md'
+    Assert ((Get-FileHash $official).Hash -eq (Get-FileHash (Join-Path $repo 'resources\cua-skill\BROWSER.md')).Hash) 'Official Skill content changed'
+    Assert (@(Get-ChildItem -LiteralPath (Join-Path $skills 'tacto-computer') -Filter SKILL.md -Recurse).Count -eq 1) 'Expected one discoverable device Skill'
     Step 'upgrade' @('-Action','Update')
     $second=Config
     Assert ($first.RuntimePath -ne $second.RuntimePath) 'Upgrade did not stage an independent runtime'
@@ -92,7 +93,7 @@ try {
     else { Assert (-not (Test-Path -LiteralPath $first.DriverPath)) 'Owned Driver remains after full uninstall' }
     Assert (Test-Path -LiteralPath (Join-Path $install 'user-note.txt')) 'Unrelated file was deleted'
     Assert (-not (Test-Path -LiteralPath (Join-Path $install 'keys'))) 'Keys remain'
-    Assert (-not (Test-Path -LiteralPath (Join-Path (Join-Path $skills ('tacto-' + $device)) 'SKILL.md'))) 'Owned Skill remains'
+    Assert (-not (Test-Path -LiteralPath (Join-Path (Join-Path $skills 'tacto-computer') 'SKILL.md'))) 'Owned Skill remains'
     Assert (-not (Test-Path -LiteralPath ('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tacto-' + $first.ClientId))) 'Installed-app entry remains'
     $document=Get-Content -LiteralPath $client -Raw | ConvertFrom-Json
     Assert ($document.mcpServers.other.command -eq 'other' -and @($document.mcpServers.PSObject.Properties).Count -eq 1) 'Client cleanup changed unrelated entries'

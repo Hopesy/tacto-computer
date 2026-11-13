@@ -19,6 +19,8 @@
 
 ## 通用检查
 
+修改上游 Skill 资源后，运行 `npm run build:skills`，由单一转换脚本更新 `install/skill-references.json`。原始发布包文件保存在 `resources/cua-skill/`；Windows 安装器与 Node CLI 共用生成的参考文档。`npm run check`、npm 打包和 ZIP 打包都会核对生成结果与来源一致。
+
 ```sh
 npm run check
 node bin/tacto.mjs --help
@@ -51,19 +53,21 @@ python3 tests/test-vps.py
 
 ## 打包
 
+正式 npm 发布工作流位于 `.github/workflows/publish.yml`，复用 Windows/Linux CI，通过 npm Trusted Publisher 直接发布。首次包初始化与信任绑定、后续发布触发方式见[发布说明](design/npm-publishing.md)。
+
 运行测试会创建 `.Tacto-temp`。也可先手动创建该目录，再打包 npm：
 
 ```sh
 node -e "require('node:fs').mkdirSync('.Tacto-temp',{recursive:true})"
 npm pack --pack-destination .Tacto-temp
-python tests/verify-package.py .Tacto-temp/tacto-mcp-0.3.0.tgz
+python tests/verify-package.py .Tacto-temp/tacto-computer-0.4.0.tgz
 ```
 
 生成 Windows ZIP：
 
 ```powershell
 ./scripts/Package.ps1
-python tests/verify-package.py .Tacto-temp/packages/Tacto-0.3.0.zip
+python tests/verify-package.py .Tacto-temp/packages/Tacto-0.4.0.zip
 ```
 
 `Package.ps1 -CuaArchive <官方压缩包路径>` 将校验通过的原始 CUA 归档放入 ZIP 的 `vendor/`。打包程序保留源码目录结构；解压后的双击安装入口位于 `install/windows/`。

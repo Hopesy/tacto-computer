@@ -2,7 +2,20 @@
 
 Goal: use the release-matched official CUA Skill pack, retain Tacto's target/transport binding, and include Skill files in update, rollback and owned uninstall. User accepted this direction after identifying the upstream `skills` commands. Preserve npm/CLI installation and `@latest` prompts. Baseline: Tacto 0.2.0, clean HEAD e5b1564.
 
-Current slice: implement both CLI and MCP routes, then managed official Skill integration. User correction: preserve CLI support for local and remote computers. Official Skill defaults include local CLI usage; Tacto's adapter binds the selected CLI/MCP endpoint and the controlled Windows platform, including Linux Agent hosts. Tests use `.Tacto-temp/`; existing production services and Agent skills stay untouched.
+Current slice (2026-11-13): the user approved executing the npm trusted publishing setup, including initial package publication, trust binding and a real CI publish. Naming and single-entry migration are verified; see [evidence](../../histories/2026-11-13-single-skill-entry.md#product-naming-correction). Prepare release 0.4.0, commit/push the reviewed source, and reuse Windows/Linux CI. The validated 0.3.0 tarball initializes the new package with a `bootstrap` tag; 0.4.0 becomes `latest` through OIDC. npm login had expired (401); the official web login is waiting for user completion in Ego space 21. Next: finish CI and package preparation while login is pending, then publish/bootstrap, bind `publish.yml` with direct publish permission, publish v0.4.0, and verify public tarball integrity and provenance. Repository/origin: `Hopesy/tacto-computer`; checkout: `C:\Users\zhouh\Desktop\tacto-mcp`. The default local installation remains absent.
+
+- [x] Prepare and statically validate `publish.yml` for direct OIDC publishing with shared Windows/Linux CI. Actionlint 1.7.12 passed; tag/version gate accepts the matching stable tag and rejects branch/mismatched tags. npm trust and a real CI publish remain pending.
+- [ ] Initialize the new npm package and bind `Hopesy/tacto-computer` / `publish.yml` with `Allow npm publish`.
+- [ ] Complete a real CI publish within two days of creating the trust configuration and verify the public package.
+
+- [x] Apply the accepted names to CLI, package, installed Skill/MCP, docs and updates.
+- [x] Verify old-name migration, conflicts, rollback and real package command.
+- [x] Rename GitHub repository to `tacto-computer`, update origin, record evidence.
+
+- [x] Build a shared reference bundle with `CUA.md`, corrected links and transformation provenance.
+- [x] Migrate Windows/Node/VPS Skills from `official/`, retaining rollback and edited-file protection.
+- [x] Verify one discoverable entry, valid references, package contents and a real isolated local installation.
+- [x] Update the [design](../../design/cli-and-skills.md#single-device-skill-entry), README and delivery evidence.
 
 - [x] Import verified official release Skill files with source, version, hashes and license attribution.
 - [x] Expose native Driver CLI calls locally and through the existing SSH callback; preserve named CLI sessions and idle-update protection.

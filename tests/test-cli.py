@@ -30,7 +30,7 @@ class CliTest(unittest.TestCase):
         proxy="/home/test user's directory/cua-proxy"
         result=self.invoke('config','--ssh','my-vps','--proxy',proxy)
         self.assertEqual(result.returncode,0,result.stderr)
-        server=json.loads(result.stdout)['mcpServers']['tacto']
+        server=json.loads(result.stdout)['mcpServers']['tacto-mcp']
         self.assertEqual(server['command'],'ssh')
         self.assertEqual(shlex.split(server['args'][-1]),['exec',proxy])
         output=self.folder/'export.json'
@@ -48,7 +48,7 @@ class CliTest(unittest.TestCase):
         config.write_text(json.dumps(dict(Phase='complete',DriverPath=str(driver),SocketPath=r'\\.\pipe\tacto-test')))
         result=self.invoke('config','--install-dir',self.folder)
         self.assertEqual(result.returncode,0,result.stderr)
-        server=json.loads(result.stdout)['mcpServers']['tacto']
+        server=json.loads(result.stdout)['mcpServers']['tacto-mcp']
         self.assertEqual(server,dict(command=str(driver),args=['mcp','--socket',r'\\.\pipe\tacto-test']))
         self.assertIn('Update the controlled PC',self.invoke('driver','--install-dir',self.folder,'call','get_screen_size','{}').stderr)
         config.write_text(json.dumps(dict(Phase='uninstalled')))

@@ -1,10 +1,14 @@
 {
-  "name": "tacto-mcp",
-  "version": "0.3.0",
+  "name": "tacto-computer",
+  "version": "0.4.0",
   "description": "Agent-independent Computer Use CLI and MCP for Windows desktops, locally or over SSH.",
   "type": "module",
   "bin": {
-    "tacto-mcp": "bin/tacto.mjs"
+    "tacto-cli": "bin/tacto.mjs"
+  },
+  "tacto": {
+    "skillName": "tacto-computer",
+    "mcpName": "tacto-mcp"
   },
   "engines": {
     "node": ">=22"
@@ -13,11 +17,11 @@
   "author": "Hopesy",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Hopesy/tacto-mcp.git"
+    "url": "git+https://github.com/Hopesy/tacto-computer.git"
   },
-  "homepage": "https://github.com/Hopesy/tacto-mcp#readme",
+  "homepage": "https://github.com/Hopesy/tacto-computer#readme",
   "bugs": {
-    "url": "https://github.com/Hopesy/tacto-mcp/issues"
+    "url": "https://github.com/Hopesy/tacto-computer/issues"
   },
   "keywords": [
     "mcp",
@@ -34,13 +38,16 @@
     "install/",
     "resources/",
     "scripts/Package.ps1",
+    "scripts/Build-Skill.mjs",
     "docs/",
     "README.md",
     "LICENSE",
     "NOTICE"
   ],
   "scripts": {
-    "check": "node --check bin/tacto.mjs && node --check src/cli.mjs && node --check src/probe.mjs && node --check src/process-env.mjs && node --check src/integration.mjs && node --check src/driver-cli.mjs && node --check src/skills.mjs",
+    "build:skills": "node scripts/Build-Skill.mjs",
+    "check": "node --check bin/tacto.mjs && node --check src/cli.mjs && node --check src/probe.mjs && node --check src/process-env.mjs && node --check src/integration.mjs && node --check src/driver-cli.mjs && node --check src/skills.mjs && node --check src/product.mjs && node scripts/Build-Skill.mjs --check",
+    "prepack": "node scripts/Build-Skill.mjs --check",
     "prepublishOnly": "npm run check"
   },
   "publishConfig": {

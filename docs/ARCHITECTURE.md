@@ -9,3 +9,4 @@ Runtime state belongs to one installation identity, named pipe and set of login 
 - [Verification evidence](VERIFICATION.md)
 
 - [CLI and official Skill integration](design/cli-and-skills.md)
+- [npm trusted publishing](design/npm-publishing.md)

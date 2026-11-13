@@ -3,6 +3,7 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -56,7 +57,7 @@ jobs:
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           npm pack --pack-destination .Tacto-temp
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python tests/verify-package.py ".Tacto-temp/tacto-mcp-$version.tgz"
+          python tests/verify-package.py ".Tacto-temp/tacto-computer-$version.tgz"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ./scripts/Package.ps1
           python tests/verify-package.py ".Tacto-temp/packages/Tacto-$version.zip"

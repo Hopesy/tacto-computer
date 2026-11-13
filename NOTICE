@@ -1,5 +1,5 @@
 Tacto
-https://github.com/Hopesy/tacto-mcp
+https://github.com/Hopesy/tacto-computer
 
 Desktop installation and SSH bridge code originated in the Rethos project:
 https://github.com/Hopesy/Rethos
@@ -13,3 +13,5 @@ Its official release archive and applicable upstream notices remain intact.
 The unchanged official CUA Skill pack under resources/cua-skill is distributed
 under the MIT License (Copyright Cua AI, Inc.). Its LICENSE and source.json record
 the upstream license, release URL, archive digest and individual file digests.
+The installed reference bundle adapts the upstream entrypoint and its references;
+install/skill-references.json includes the MIT license and adaptation provenance.

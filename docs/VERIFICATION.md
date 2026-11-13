@@ -34,7 +34,7 @@
 
 `tests/verify-package.py` 验证 npm/ZIP 必要文件、npm 内容与源码一致、ZIP manifest 的逐文件摘要，以及解压到带空格目录后的 CLI 入口。发行形态为 npm 包及源码 ZIP；ZIP 可选附带官方原始 CUA 归档。
 
-[GitHub Actions](https://github.com/Hopesy/tacto-mcp/actions/workflows/ci.yml) 在 Windows 与 Linux 上运行回归。真实桌面测试作为发布前本机验收，CI 使用隔离的系统边界和实际流式 MCP 替身。
+[GitHub Actions](https://github.com/Hopesy/tacto-computer/actions/workflows/ci.yml) 在 Windows 与 Linux 上运行回归。真实桌面测试作为发布前本机验收，CI 使用隔离的系统边界和实际流式 MCP 替身。
 
 ## 部署验收范围
 
@@ -43,3 +43,9 @@
 ## 0.3.0 CLI 与官方 Skill
 
 原生 CLI 跨进程命名会话、维护保护和完整 Windows 生命周期验收通过；整套 Skill 的迁移、回滚、编辑保留及 UTF-8 大包传输回归通过。证据与发布状态见 [0.3.0 记录](histories/2026-11-12-v0.3.0.md)。
+
+## 单设备 Skill 入口
+
+2026-11-13：单入口与参考文档布局通过 Node、Windows PowerShell 5.1、WSL VPS 和发行包检查。真实隔离安装完成旧版安装、升级、回滚和再次升级，目录中 `SKILL.md` 数量依次为 2、1、2、1；CLI 调用与完整卸载通过。详细版本、场景和证据见[交付记录](histories/2026-11-13-single-skill-entry.md)。
+
+同日按用户确认统一命名：npm 包和 Skill 为 `tacto-computer`，CLI 为 `tacto-cli`，MCP 服务为 `tacto-mcp`。旧名称迁移、冲突保护、VPS 和真实 Windows 回滚通过；新包在独立 npm 缓存中成功执行 `tacto-cli --version` 和 `--help`。命名及仓库改名证据见[记录](histories/2026-11-13-single-skill-entry.md#product-naming-correction)。

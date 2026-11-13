@@ -105,23 +105,42 @@ class SetupTest(unittest.TestCase):
         receipt.write_text(json.dumps(dict(config=str(config),name=state['mcpName'],server=state['mcp'],skill=str(skill),skillHash=hashlib.sha256(b'old').hexdigest())))
         (folder/'agent-integrations.json').write_text(json.dumps([dict(clientId=state['clientId'],receipt=str(receipt))]))
         files={'SKILL.md':'Use {{VPS_CLI}}', 'official/WINDOWS.md':'official '+ 'x'*100000, 'official/RUNTIME.md':'sessions'}
+        files['official/SKILL.md']='---\nname: cua-driver\n---\nCUA guide'
         request=dict(action='configure',device='test-laptop',clientId='id-1',skillFiles=files)
         result=setup.execute(request,self.home)
         self.assertEqual(result['preservedIntegrations'],[])
         self.assertIn('driver --proxy',skill.read_text())
         reference=skill.parent/'official/WINDOWS.md'
         self.assertEqual(reference.read_text(),files['official/WINDOWS.md'])
+        # Upgrade the existing nested pack, then roll back through the same helper.
+        adapted={'SKILL.md':'Use {{VPS_CLI}}', 'references/CUA.md':'CUA guide', 'references/WINDOWS.md':'Windows guide', 'references/RUNTIME.md':'sessions'}
+        updated=dict(request,skillFiles=adapted,mcpName='tacto-mcp',skillName='tacto-computer',cliPrefix='npx -y --package tacto-computer@latest tacto-cli driver')
+        setup.execute(updated,self.home)
+        renamed=skill.parent.parent/'tacto-computer'
+        self.assertFalse(skill.parent.exists())
+        self.assertEqual(set(json.loads(config.read_text())['mcpServers']),{'tacto-mcp'})
+        self.assertEqual(json.loads(receipt.read_text())['name'],'tacto-mcp')
+        self.assertIn('--package tacto-computer@latest tacto-cli', (renamed/'SKILL.md').read_text())
+        for target in (renamed,folder/'skill'):
+            self.assertEqual(list(target.rglob('SKILL.md')),[target/'SKILL.md'])
+            self.assertFalse((target/'official').exists())
+            self.assertEqual((target/'references/CUA.md').read_text(),'CUA guide')
+        setup.execute(request,self.home)
+        self.assertTrue((skill.parent/'official/SKILL.md').exists())
+        self.assertFalse(renamed.exists())
+        self.assertEqual(set(json.loads(config.read_text())['mcpServers']),{'computer-test-laptop'})
         # A previous runtime can roll the same receipt back to its single-file Skill.
         setup.execute(dict(action='configure',device='test-laptop',clientId='id-1',skillText='old'),self.home)
         self.assertFalse(reference.exists())
         self.assertEqual(skill.read_text(),'old')
-        setup.execute(request,self.home)
+        setup.execute(updated,self.home)
+        reference=renamed/'references/WINDOWS.md'
         reference.write_text('user extension')
-        self.assertIn(str(reference),setup.execute(request,self.home)['preservedIntegrations'])
+        self.assertIn(str(reference),setup.execute(updated,self.home)['preservedIntegrations'])
         removed=setup.execute(dict(action='remove',device='test-laptop',clientId='id-1'),self.home)
         self.assertEqual(removed['preservedIntegrations'],[str(reference)])
         self.assertEqual(reference.read_text(),'user extension')
-        self.assertFalse(skill.exists())
+        self.assertFalse((renamed/'SKILL.md').exists())
         self.assertFalse((reference.parent/'RUNTIME.md').exists())
         with self.assertRaises(ValueError): setup.skill_files({'skillFiles':{'SKILL.md':'x','../escape':'x'}},folder)
 

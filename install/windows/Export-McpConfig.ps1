@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory=$true,ParameterSetName='Ssh')][string]$ProxyPath,
     [Parameter(Mandatory=$true,ParameterSetName='Ssh')][string]$SshHost,
     [Parameter(ParameterSetName='Ssh')][string]$SshConfig,
-    [ValidatePattern('^[a-zA-Z][a-zA-Z0-9_-]{0,63}$')][string]$Name = 'tacto',
+    [ValidatePattern('^[a-zA-Z][a-zA-Z0-9_-]{0,63}$')][string]$Name = 'tacto-mcp',
     [Parameter(Mandatory=$true)][string]$OutputPath,
     [switch]$Force
 )
