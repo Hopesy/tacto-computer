@@ -5,11 +5,12 @@ import {childEnvironment} from './process-env.mjs';
 
 const {version} = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
+async function runProbe() {
 const argv = process.argv.slice(2);
 const healthRequested = argv.includes('--health') || argv.includes('--smoke');
 const smokeRequested = argv.includes('--smoke');
-if (argv.some(arg => arg.startsWith('--') && !['--health','--smoke'].includes(arg))) throw new Error('Unknown probe option');
-const [path, selected] = argv.filter(arg => !arg.startsWith('--'));
+if (argv.some(arg => arg.startsWith('-') && !['--health','--smoke'].includes(arg))) throw new Error('Unknown probe option');
+const [path, selected] = argv.filter(arg => !arg.startsWith('-'));
 if (!path) throw new Error('Usage: node probe.mjs <mcp.json> [server-name]');
 const config = JSON.parse((await readFile(path, 'utf8')).replace(/^\uFEFF/, ''));
 const names = Object.keys(config.mcpServers ?? {});
@@ -18,7 +19,7 @@ const server = name && config.mcpServers[name];
 if (!server || typeof server.command !== 'string' || !Array.isArray(server.args) || !server.args.every(arg => typeof arg === 'string')) {
   throw new Error('Select one stdio MCP server with command and args.');
 }
-const child = spawn(server.command, server.args, {stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: childEnvironment(server.env)});
+const child = spawn(server.command, server.args, {stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: childEnvironment(server.env, server.command)});
 child.stderr.resume();
 const pending = new Map();
 let nextId = 0;
@@ -126,3 +127,7 @@ try {
   }
   lines.close();
 }
+}
+
+try { await runProbe(); }
+catch (error) { console.error(`Tacto: ${error.message}`); process.exitCode = 1; }

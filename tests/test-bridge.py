@@ -36,6 +36,9 @@ else if(s.Contains("tools/list")) Console.WriteLine("{\\\"jsonrpc\\\":\\\"2.0\\\
             self.assertEqual(list((folder/'connections').glob('*.json')),[])
             (folder/'transaction.json').write_text('{}')
             self.assertNotEqual(probe().returncode,0)
+            health_mcp = folder / 'mcp-health.json'
+            health_mcp.write_text(json.dumps({'mcpServers': {'fixture': {'command':'powershell.exe', 'args':['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(root/'install/windows/Invoke-CuaBridge.ps1'),'-ConfigPath',str(config),'-Local','-Health']}}}))
+            self.assertEqual(subprocess.run(['node',str(root/'src/probe.mjs'),str(health_mcp)],capture_output=True,text=True,timeout=40).returncode,0)
             self.assertEqual(list((folder/'connections').glob('*.json')),[])
 
 
@@ -45,11 +48,14 @@ else if(s.Contains("tools/list")) Console.WriteLine("{\\\"jsonrpc\\\":\\\"2.0\\\
         with tempfile.TemporaryDirectory(prefix='cli-bridge-',dir=fixtures) as directory:
             folder=Path(directory)
             source=folder/'driver.cs'
-            source.write_text('''using System; using System.Web.Script.Serialization;
+            source.write_text('''using System; using System.Diagnostics; using System.Web.Script.Serialization;
 class Fake { static void Main(string[] args) {
 Console.InputEncoding=new System.Text.UTF8Encoding(false); Console.OutputEncoding=new System.Text.UTF8Encoding(false);
+string raw=Console.In.ReadToEnd();
+if(raw.Contains("spawn_holder")) { Process.Start(new ProcessStartInfo("powershell.exe","-NoProfile -NonInteractive -Command Start-Sleep -Seconds 8"){UseShellExecute=false,CreateNoWindow=true}); }
 var json=new JavaScriptSerializer();
-Console.WriteLine(json.Serialize(new { arguments=args, input=Console.In.ReadToEnd() }));
+bool err=raw.Contains("fail_end");
+Console.WriteLine(json.Serialize(new { isError=err, arguments=args, input=raw }));
 }}''')
             driver=folder/'fake driver.exe'
             compiler=Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
@@ -72,10 +78,22 @@ Console.WriteLine(json.Serialize(new { arguments=args, input=Console.In.ReadToEn
                 self.assertEqual(json.loads(body['input']),payload['args'])
                 self.assertEqual(len(list((folder/'cli-sessions').glob('*.json'))),1)
                 self.assertEqual(list((folder/'connections').glob('*.json')),[])
+            failed_end=invoke(dict(command='call',tool='end_session',args=dict(session='named-test',reason='fail_end')))
+            self.assertEqual(failed_end.returncode,0,failed_end.stderr)
+            self.assertEqual(len(list((folder/'cli-sessions').glob('*.json'))),1)
             end=invoke(dict(command='call',tool='end_session',args=dict(session='named-test')))
             self.assertEqual(end.returncode,0,end.stderr)
             self.assertEqual(list((folder/'cli-sessions').glob('*.json')),[])
+            steps_start=invoke(dict(command='call',tool='run_steps',args=dict(steps=[dict(tool='click',args=dict(session='batch-run'))])))
+            self.assertEqual(steps_start.returncode,0,steps_start.stderr)
+            self.assertEqual(len(list((folder/'cli-sessions').glob('*.json'))),1)
+            steps_end=invoke(dict(command='call',tool='run_steps',args=dict(session='batch-run',steps=[dict(tool='click',args={}),dict(tool='end_session',args={})])))
+            self.assertEqual(steps_end.returncode,0,steps_end.stderr)
+            self.assertEqual(list((folder/'cli-sessions').glob('*.json')),[])
+            holder=invoke(dict(command='call',tool='launch_app',args=dict(mode='spawn_holder')))
+            self.assertEqual(holder.returncode,0,holder.stderr)
             self.assertNotEqual(invoke(dict(command='stop')).returncode,0)
+            self.assertNotEqual(invoke(dict(command='call',tool='stop',args={})).returncode,0)
             (folder/'transaction.json').write_text('{}')
             self.assertNotEqual(invoke(payload).returncode,0)
             self.assertEqual(list((folder/'connections').glob('*.json')),[])

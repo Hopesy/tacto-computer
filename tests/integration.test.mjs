@@ -13,9 +13,15 @@ const server = {command: 'ssh', args: ['test-vps', 'exec /home/test/.tacto/devic
 test('remote cleanup uses a bounded compressed bootstrap and retains receipt after failure', async () => {
   const {folder} = await fixture();
   const receipt=join(folder,'cleanup.json');
-  await writeFile(receipt,JSON.stringify({host:'example.test',user:'tester',port:22,device:'office',clientId:'owned'}));
+  await writeFile(receipt,JSON.stringify({host:'[2001:db8::1]',user:'tester',port:2222,device:'office',clientId:'owned',knownHosts:['[2001:db8::1]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixture']}));
+  let capturedKnownFile=null;
   const run=async (command,args) => {
     assert.equal(command,'ssh');
+    assert.ok(args.includes('tester@2001:db8::1'));
+    const khIndex=args.indexOf('UserKnownHostsFile=' + (args.find(a=>a.startsWith('UserKnownHostsFile='))?.slice(19) ?? ''));
+    assert.notEqual(khIndex,-1);
+    capturedKnownFile=args[khIndex].slice('UserKnownHostsFile='.length);
+    assert.match(await readFile(capturedKnownFile,'utf8'),/2001:db8::1/);
     const remote=args.at(-1);
     assert.ok(remote.length < 29000);
     const encoded=remote.match(/b64decode\('([^']+)'\)/)[1];
@@ -23,6 +29,7 @@ test('remote cleanup uses a bounded compressed bootstrap and retains receipt aft
     return 1;
   };
   assert.equal(await cleanupRemote({receipt},root,run),1);
+  await assert.rejects(access(capturedKnownFile),{code:'ENOENT'});
   await access(receipt);
   assert.equal(await cleanupRemote({receipt},root,async()=>0),0);
   await assert.rejects(access(receipt),{code:'ENOENT'});
@@ -187,4 +194,26 @@ test('legacy one-file receipt migrates to official pack and CLI binds the select
   await disconnectAgent(options);
   await assert.rejects(access(dirname(skill)),{code:'ENOENT'});
   await assert.rejects(access(dirname(result.skill)),{code:'ENOENT'});
+});
+test('key-order-reformatted MCP entries and custom multi-device names coexist cleanly',async()=>{
+  const {folder,options,original}=await fixture();
+  await connectAgent(options,server,root);
+  const reordered={theme:'dark',mcpServers:{unrelated:original.mcpServers.unrelated,'tacto-mcp':{args:[...server.args],command:server.command}}};
+  await writeFile(options['mcp-config'],JSON.stringify(reordered,null,2));
+  await connectAgent({...options,'browser-mode':'existing'},server,root);
+  const secondServer={command:'ssh',args:['home-vps','exec /home/test/.tacto/devices/home/cua-proxy']};
+  const secondOpts={...options,'device-name':'home','mcp-name':'tacto-home','skill-name':'tacto-home'};
+  const second=await connectAgent(secondOpts,secondServer,root);
+  assert.equal(second.name,'tacto-home');
+  assert.match(await readFile(second.skill,'utf8'),/^---\nname: tacto-home\n[\s\S]*tacto-home/m);
+  const merged=JSON.parse(await readFile(options['mcp-config'],'utf8'));
+  assert.deepEqual(Object.keys(merged.mcpServers).sort(),['tacto-home','tacto-mcp','unrelated']);
+  assert.deepEqual(await disconnectAgent(options),{ok:true,preserved:[]});
+  assert.deepEqual(await disconnectAgent(secondOpts),{ok:true,preserved:[]});
+  assert.deepEqual(JSON.parse(await readFile(options['mcp-config'],'utf8')),original);
+  await mkdir(join(folder,'appdata','opencode'),{recursive:true});
+  await mkdir(join(folder,'.config','opencode'),{recursive:true});
+  const opencodeDirs=await detectSkillDirectories(folder,{APPDATA:join(folder,'appdata')});
+  assert.ok(opencodeDirs.includes(join(folder,'appdata','opencode','skills')));
+  assert.ok(opencodeDirs.includes(join(folder,'.config','opencode','skills')));
 });

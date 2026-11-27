@@ -6,7 +6,7 @@ Tacto 负责 CUA Driver、SSH 隧道、后台启动、升级恢复和卸载。Ag
 
 仓库和 npm 包统一命名为 **`tacto-computer`**，提供 **`tacto-cli`** 命令、**`tacto-computer`** Skill，以及 **`tacto-mcp`** MCP 服务。设备名称记录在连接参数和安装状态中。
 
-当前版本 **0.4.1**。安装入口统一使用 npm/命令行。受控电脑需要 Windows 10/11 x64；npm CLI 需要 Node.js 22+。Agent 可以运行在 Windows、Linux VPS、容器或其他支持命令行或 MCP 的环境。远端 VPS 需要 Python 3 和 OpenSSH。
+当前版本 **0.4.2**。安装入口统一使用 npm/命令行。受控电脑需要 Windows 10/11 x64；npm CLI 需要 Node.js 22+。Agent 可以运行在 Windows、Linux VPS、容器或其他支持命令行或 MCP 的环境。远端 VPS 需要 Python 3 和 OpenSSH。
 
 ## 一条命令安装
 
@@ -28,7 +28,7 @@ npx.cmd -y --package tacto-computer@latest tacto-cli setup --local --unattended 
 
 配置合并保留其他 MCP 服务；遇到同名、来源未确认的条目时会报告冲突。安装状态和导出的 `mcp-local.json`、`skill/SKILL.md` 位于 `%LOCALAPPDATA%\Tacto`。支持 `--install-dir` 指定独立目录，后续命令使用相同目录。
 
-升级会根据原有安装记录，将 `computer-<设备名>` MCP 条目和 `tacto-<设备名>` Skill 目录迁移为上述固定名称；回滚恢复旧版名称。每份客户端配置及 Skill 目录绑定所选设备，多设备可分别指定客户端配置和 Skill 目录。
+升级会根据原有安装记录，将 `computer-<设备名>` MCP 条目和 `tacto-<设备名>` Skill 目录迁移为上述固定名称；回滚恢复旧版名称。多台受控电脑接入同一份全局客户端配置或 Skill 目录时，可通过 `--mcp-name` 和 `--skill-name` 指定独立名称。可选通过 `--permission-mode standard|bounded|unrestricted` 与 `--capability-manifest <路径>` 配置 CUA 权限策略。
 
 也可以在 Agent 中配置标准 stdio 入口：
 
@@ -64,11 +64,11 @@ npx.cmd -y --package tacto-computer@latest tacto-cli driver call get_screen_size
 '{"session":"my-task"}' | npx.cmd -y --package tacto-computer@latest tacto-cli driver call end_session
 ```
 
-`call TOOL` 也可直接写为 `tacto-cli call TOOL`。参数支持 JSON 字符串或 UTF-8 标准输入；中文等内容通过管道传递时，PowerShell 5.1 先设置 `$OutputEncoding = [Text.UTF8Encoding]::new($false)`。`--install-dir` 选择安装目录。
+`call TOOL` 也可省略 `call` 直接写为 `tacto-cli driver TOOL` 或 `tacto-cli call TOOL`（与官方 CUA 示例兼容）。参数支持 `--key=value`、JSON 字符串或 UTF-8 标准输入；中文等内容通过管道传递时，PowerShell 5.1 先设置 `$OutputEncoding = [Text.UTF8Encoding]::new($false)`。`--install-dir` 选择安装目录。
 
-CLI 命名会话在同一后台 Driver 中跨命令保留，空闲五分钟过期；省略会话名的命令使用临时会话。MCP 通过持续连接维护会话。每次切换入口或后台重启后重新观察目标。需要持续连接的录制工具可走 MCP。
+CLI 命名会话（含 `run_steps` 批量步骤中的命名会话）在同一后台 Driver 中跨命令保留，空闲五分钟过期；省略会话名的命令使用临时会话。MCP 通过持续连接维护会话。每次切换入口或后台重启后重新观察目标。需要持续连接的录制工具可走 MCP。
 
-`driver status`、`driver doctor`、`driver --version` 检查受控电脑。返回图像的工具可附加 `--screenshot-out-file <新文件路径>`，图像保存在运行 CLI 的机器上。
+`driver status`、`driver doctor`、`driver --version` 检查受控电脑。返回图像的工具可附加 `--screenshot-out-file <新文件路径>`，图像保存在运行 CLI 的机器上，且 JSON 标准输出会自动省略原始 Base64 图像字段以避免占用上下文。
 
 ## 通过 VPS 接入
 

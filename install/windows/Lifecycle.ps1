@@ -7,10 +7,45 @@ function Property($Object, [string]$Name, $Default = $null) {
 }
 function Set-Property($Object, [string]$Name, $Value) { $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force }
 function Write-AtomicJson([string]$Path, $Value) {
-    $temp = $Path + '.new'
-    Write-Utf8 $temp ($Value | ConvertTo-Json -Depth 32)
-    if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
-    else { [IO.File]::Move($temp, $Path) }
+    $temp = $Path + '.' + [guid]::NewGuid().ToString('N') + '.new'
+    try {
+        Write-Utf8 $temp ($Value | ConvertTo-Json -Depth 32)
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            try {
+                if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
+                else { [IO.File]::Move($temp, $Path) }
+                break
+            } catch [System.IO.IOException] {
+                if ($attempt -eq 9) { throw }
+                Start-Sleep -Milliseconds 100
+            }
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+    }
+}
+function Remove-StaleRuntimes($ActiveConfig, $PreviousConfig) {
+    $releasesRoot = Join-Path $InstallDirectory 'releases'
+    if (-not (Test-Path -LiteralPath $releasesRoot)) { return }
+    $keep = @()
+    foreach ($cfg in @($ActiveConfig, $PreviousConfig)) {
+        $rt = Property $cfg 'RuntimePath'
+        if ($rt) { $keep += [IO.Path]::GetFullPath($rt).TrimEnd('\') }
+    }
+    $manifestPath = Join-Path $InstallDirectory 'ownership.json'
+    $removedRelatives = @()
+    foreach ($dir in @(Get-ChildItem -LiteralPath $releasesRoot -Directory -Force)) {
+        if ($keep -notcontains $dir.FullName.TrimEnd('\')) {
+            $rel = 'releases\' + $dir.Name
+            Remove-OwnedPath $rel
+            $removedRelatives += $rel
+        }
+    }
+    if ($removedRelatives.Count -and (Test-Path -LiteralPath $manifestPath)) {
+        $state = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $state.paths = @($state.paths | Where-Object { $removedRelatives -notcontains $_ })
+        Write-AtomicJson $manifestPath $state
+    }
 }
 function Assert-InstallRoot {
     $forbidden = @([IO.Path]::GetPathRoot($InstallDirectory), $env:USERPROFILE, $env:LOCALAPPDATA, $env:APPDATA, $env:ProgramFiles, $env:WINDIR, [Environment]::GetFolderPath('Desktop'))
@@ -153,9 +188,11 @@ function Register-Uninstaller($Config) {
     $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tacto-' + $Config.ClientId
     New-Item -Path $key -Force | Out-Null
     $powershell="$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $args=@('-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $Config.RuntimePath 'install\windows\Setup-Tacto.ps1'),'-Action','Uninstall','-InstallDirectory',$InstallDirectory,'-Unattended')
-    $command=(Quote-Argument $powershell) + ' ' + (($args | ForEach-Object { Quote-Argument $_ }) -join ' ')
-    foreach ($entry in @{DisplayName=('Tacto - ' + $Config.DeviceName);DisplayVersion=$Config.TactoVersion;Publisher='Hopesy';InstallLocation=$InstallDirectory;UninstallString=$command;QuietUninstallString=$command}.GetEnumerator()) { New-ItemProperty -Path $key -Name $entry.Key -Value $entry.Value -PropertyType String -Force | Out-Null }
+    $interactiveArgs=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $Config.RuntimePath 'install\windows\Setup-Tacto.ps1'),'-Action','Uninstall','-InstallDirectory',$InstallDirectory)
+    $quietArgs=@('-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $Config.RuntimePath 'install\windows\Setup-Tacto.ps1'),'-Action','Uninstall','-InstallDirectory',$InstallDirectory,'-Unattended')
+    $interactiveCommand=(Quote-Argument $powershell) + ' ' + (($interactiveArgs | ForEach-Object { Quote-Argument $_ }) -join ' ')
+    $quietCommand=(Quote-Argument $powershell) + ' ' + (($quietArgs | ForEach-Object { Quote-Argument $_ }) -join ' ')
+    foreach ($entry in @{DisplayName=('Tacto - ' + $Config.DeviceName);DisplayVersion=$Config.TactoVersion;Publisher='Hopesy';InstallLocation=$InstallDirectory;UninstallString=$interactiveCommand;QuietUninstallString=$quietCommand}.GetEnumerator()) { New-ItemProperty -Path $key -Name $entry.Key -Value $entry.Value -PropertyType String -Force | Out-Null }
     foreach ($name in @('NoModify','NoRepair')) { New-ItemProperty -Path $key -Name $name -Value 1 -PropertyType DWord -Force | Out-Null }
 }
 function Export-Connections($Config) {
@@ -172,7 +209,7 @@ function Restore-Transaction {
     $transaction = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
     $previous = $transaction.previous
     Stop-OwnedTasks $transaction.candidate
-    Remove-AgentIntegration $transaction.candidate
+    try { Remove-AgentIntegration $transaction.candidate } catch { Write-Warning ('Skipped candidate Agent cleanup during recovery: ' + $_.Exception.Message) }
     if ($previous -and $previous.Phase -eq 'complete') {
         Save-Config $previous
         foreach ($backup in @($transaction.files)) {
@@ -183,7 +220,8 @@ function Restore-Transaction {
             if ($previous.Mode -eq 'Remote') { $null=Invoke-Vps $previous 'configure' }
             Install-Tasks $previous
             $server=Export-Connections $previous
-            Set-AgentIntegration $previous $server
+            try { Set-AgentIntegration $previous $server }
+            catch { Write-Warning ('Preserved edited Agent integration during recovery: ' + $_.Exception.Message) }
             Save-Config $previous
             Register-Uninstaller $previous
             Set-AutoUpdateTask $previous
@@ -236,9 +274,29 @@ function Wait-Healthy($Config) {
 }
 function Install-Desktop {
     $previous = if (Test-Path -LiteralPath $script:ConfigPath) { Get-Config } else { $null }
-    $config = if ($previous) { $previous | ConvertTo-Json -Depth 32 | ConvertFrom-Json } else { New-DesktopConfig }
+    $isEstablished = $previous -and ($previous.Phase -in @('complete','uninstalled'))
+    if ($previous -and -not $isEstablished -and $Action -eq 'Install') {
+        Stop-OwnedTasks $previous
+        $fresh = New-DesktopConfig
+        $fresh.ClientId = $previous.ClientId
+        $instance = $fresh.DeviceName + '-' + $fresh.ClientId.Substring(0,8)
+        $fresh.SocketPath = '\\.\pipe\tacto-' + $instance
+        $fresh.CuaTask = 'Tacto-CUA-' + $instance
+        $fresh.TunnelTask = 'Tacto-Tunnel-' + $instance
+        if (Property $previous 'AuthorizedKeysFile') { $fresh.AuthorizedKeysFile = $previous.AuthorizedKeysFile }
+        if (Property $previous 'WindowsHostKey') { $fresh.WindowsHostKey = $previous.WindowsHostKey }
+        if ($previous.PSObject.Properties['AuthorizedFileCreated']) { Set-Property $fresh 'AuthorizedFileCreated' $previous.AuthorizedFileCreated }
+        if ($previous.PSObject.Properties['SshCreated']) { Set-Property $fresh 'SshCreated' $previous.SshCreated }
+        if ($previous.PSObject.Properties['SshConfigHash']) { Set-Property $fresh 'SshConfigHash' $previous.SshConfigHash }
+        if ($previous.PSObject.Properties['SshStartTypeChanged']) { Set-Property $fresh 'SshStartTypeChanged' $previous.SshStartTypeChanged }
+        if ($previous.PSObject.Properties['SshPreviousStartType']) { Set-Property $fresh 'SshPreviousStartType' $previous.SshPreviousStartType }
+        $config = $fresh
+        $previous = $null
+    } else {
+        $config = if ($previous) { $previous | ConvertTo-Json -Depth 32 | ConvertFrom-Json } else { New-DesktopConfig }
+    }
     if ($previous) {
-        if (($script:ModeSpecified -and $Mode -ne $config.Mode) -or ($config.Mode -eq 'Remote' -and (($VpsHost -and $VpsHost -ne $config.VpsHost) -or ($VpsUser -and $VpsUser -ne $config.VpsUser))) -or ($DeviceName -and $DeviceName -ne $config.DeviceName)) { throw 'Uninstall the existing connection before changing its identity or destination.' }
+        if (($script:ModeSpecified -and $Mode -ne $config.Mode) -or ($config.Mode -eq 'Remote' -and (($VpsHost -and (Normalize-Host $VpsHost) -ne (Normalize-Host ([string]$config.VpsHost))) -or ($VpsUser -and $VpsUser -ne $config.VpsUser))) -or ($DeviceName -and $DeviceName -ne $config.DeviceName)) { throw 'Uninstall the existing connection before changing its identity or destination.' }
         Assert-Idle
         foreach ($pair in @(@('McpConfig',$McpConfig),@('SkillDirectory',$SkillDirectory))) {
             $old=Property $previous $pair[0]
@@ -250,10 +308,19 @@ function Install-Desktop {
         $config.Remote=$null
         $config.AuthorizedKeysFile=''
     }
+    if ($McpName) { Set-Property $config 'McpName' $McpName }
+    if ($SkillName) { Set-Property $config 'SkillName' $SkillName }
+    if ($PermissionMode) { Set-Property $config 'PermissionMode' $PermissionMode }
     Assert-Settings $config
     Protect-Directory $InstallDirectory
     foreach ($path in @('desktop.json','previous.json','.Tacto-temp','keys','logs','connections','cli-sessions','skill','mcp-local.json','mcp-vps.json','Invoke-CuaBridge.ps1','sshd_config.before')) { Add-OwnedPath $path }
     Protect-Directory (Join-Path $InstallDirectory 'keys')
+    if ($CapabilityManifest) {
+        $manifestTarget = Join-Path $InstallDirectory 'capability-manifest.yaml'
+        Copy-Item -LiteralPath (Resolve-Path -LiteralPath $CapabilityManifest).Path -Destination $manifestTarget -Force
+        Add-OwnedPath 'capability-manifest.yaml'
+        Set-Property $config 'CapabilityManifestPath' $manifestTarget
+    }
     if (-not $previous) { Save-Config $config }
     if ($IdentityFile) { Set-Property $config 'BootstrapIdentityFile' (Resolve-Path -LiteralPath $IdentityFile).Path }
     elseif (Property $config 'BootstrapIdentityFile') { $script:IdentityFile = $config.BootstrapIdentityFile }
@@ -271,6 +338,7 @@ function Install-Desktop {
     if (-not $DriverPath -and $config.DriverOwned) { Add-OwnedPath ('cua-' + $release.version) }
     Install-Cua $config
     Stage-Runtime $config
+    Assert-AgentIntegrationReady $config
     Write-Host '[2/5] Preparing connection'
     if ($config.Mode -eq 'Remote') {
         if (-not (Test-Path -LiteralPath $config.TunnelKey)) { Invoke-Native (Get-SshExe 'ssh-keygen.exe') @('-q','-t','ed25519','-N','','-f',$config.TunnelKey) }
@@ -294,7 +362,7 @@ function Install-Desktop {
         Copy-Item -LiteralPath (Join-Path $config.RuntimePath 'install\windows\Invoke-CuaBridge.ps1') -Destination (Join-Path $InstallDirectory 'Invoke-CuaBridge.ps1') -Force
         $config.Phase = 'connecting'
         Save-Config $config
-        if ($config.Mode -eq 'Remote' -and (-not $previous -or $previous.Phase -ne 'complete' -or -not (Property $previous 'RuntimePath'))) { Set-WindowsAuthorization $config $config.Remote.windowsKey }
+        if ($config.Mode -eq 'Remote' -and $config.Remote -and (Property $config.Remote 'windowsKey')) { Set-WindowsAuthorization $config $config.Remote.windowsKey }
         Install-Tasks $config
         Write-Host '[4/5] Verifying the real MCP connection'
         Wait-Healthy $config
@@ -310,6 +378,7 @@ function Install-Desktop {
             Copy-Item -LiteralPath (Join-Path $InstallDirectory 'transaction.json') -Destination (Join-Path $InstallDirectory 'previous-transaction.json') -Force
         }
         Remove-Item -LiteralPath (Join-Path $InstallDirectory 'transaction.json') -Force
+        Remove-StaleRuntimes $config $previous
     } catch {
         $failure = $_.Exception.Message
         try { Restore-Transaction } catch { throw "Update failed: $failure. Recovery pending: $($_.Exception.Message). Run update again." }
@@ -339,6 +408,7 @@ function Invoke-Rollback {
         Write-Host $script:Outcome
         return
     }
+    Assert-AgentIntegrationReady $previous (Property $current 'Integration')
     Start-Transaction $current $previous
     try {
         if ($Force) { Stop-OwnedConnections }
@@ -356,6 +426,7 @@ function Invoke-Rollback {
         Set-AutoUpdateTask $previous
         Write-AtomicJson $file $current
         Remove-Item -LiteralPath (Join-Path $InstallDirectory 'transaction.json')
+        Remove-StaleRuntimes $previous $current
         $script:Outcome = 'Rollback completed and MCP health verified.'
         Write-Host $script:Outcome
     } catch { $failure=$_.Exception.Message; Restore-Transaction; throw $failure }
@@ -387,16 +458,20 @@ function Uninstall-Desktop {
     $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tacto-' + $config.ClientId
     if (Test-Path -LiteralPath $key) { Remove-Item -LiteralPath $key -Recurse -Force }
     if ($pending) {
+        $knownHostsLines = @()
+        if ((Property $config 'KnownHostsFile') -and (Test-Path -LiteralPath $config.KnownHostsFile)) {
+            $knownHostsLines = @([IO.File]::ReadAllLines($config.KnownHostsFile, [Text.Encoding]::UTF8) | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
+        }
         $receiptFolder = Join-Path $env:LOCALAPPDATA 'Tacto-cleanup'
         New-Item -ItemType Directory -Force $receiptFolder | Out-Null
         $receipt = Join-Path $receiptFolder ($config.ClientId + '.json')
         $proxy = Property $config.Remote 'mcp'
-        Write-AtomicJson $receipt @{schema=1;device=$config.DeviceName;clientId=$config.ClientId;host=$config.VpsHost;user=$config.VpsUser;port=$config.VpsPort;proxy=(Property $proxy 'command');error=$pending;action='Sign in to the VPS and run tacto-cli cleanup --receipt <this file> on an SSH-capable Agent host.'}
+        Write-AtomicJson $receipt @{schema=1;device=$config.DeviceName;clientId=$config.ClientId;host=$config.VpsHost;user=$config.VpsUser;port=$config.VpsPort;proxy=(Property $proxy 'command');knownHosts=$knownHostsLines;error=$pending;action='Sign in to the VPS and run tacto-cli cleanup --receipt <this file> on an SSH-capable Agent host.'}
         $script:PendingRemote = $receipt
         Write-Warning "Local cleanup continues. Remote cleanup receipt: $receipt"
     }
     # Legacy installations have a known, bounded set of owned resources.
-    foreach ($path in @('desktop.json','previous.json','transaction.json','.Tacto-temp','keys','logs','connections','cli-sessions','skill','mcp-local.json','mcp-vps.json','Invoke-CuaBridge.ps1','Start-Tunnel.ps1','BackgroundLauncher.cs','BackgroundLauncher.exe','cua.pid','sshd_config.before')) { Add-OwnedPath $path }
+    foreach ($path in @('desktop.json','previous.json','transaction.json','.Tacto-temp','keys','logs','connections','cli-sessions','skill','mcp-local.json','mcp-vps.json','Invoke-CuaBridge.ps1','Start-Tunnel.ps1','BackgroundLauncher.cs','BackgroundLauncher.exe','cua.pid','sshd_config.before','capability-manifest.yaml')) { Add-OwnedPath $path }
     if ($config.DriverOwned -and $config.DriverPath.StartsWith($InstallDirectory.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
         $driverFolder = $config.DriverPath.Substring($InstallDirectory.Length+1).Split('\')[0]
         if ($driverFolder -match '^cua-[0-9]') { Add-OwnedPath $driverFolder }
@@ -426,16 +501,26 @@ function Set-AutoUpdateTask($Config) {
     } elseif (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName $name -Confirm:$false }
 }
 function Restore-OpenSshSettings($Config) {
-    if (-not (Property $Config 'SshCreated' $false)) { return }
-    $file=Join-Path $env:ProgramData 'ssh\sshd_config'
-    $backup=Join-Path $InstallDirectory 'sshd_config.before'
-    if ((Test-Path -LiteralPath $backup) -and (Test-Path -LiteralPath $file) -and (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -eq (Property $Config 'SshConfigHash')) {
-        $authorization=if (Test-Path -LiteralPath $Config.AuthorizedKeysFile) { @(Get-Content -LiteralPath $Config.AuthorizedKeysFile | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') }) } else { @() }
+    $authorization=if ((Property $Config 'AuthorizedKeysFile') -and (Test-Path -LiteralPath $Config.AuthorizedKeysFile)) { @(Get-Content -LiteralPath $Config.AuthorizedKeysFile | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') }) } else { @() }
+    if (Property $Config 'SshCreated' $false) {
+        $file=Join-Path $env:ProgramData 'ssh\sshd_config'
+        $backup=Join-Path $InstallDirectory 'sshd_config.before'
+        if ((Test-Path -LiteralPath $backup) -and (Test-Path -LiteralPath $file) -and (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -eq (Property $Config 'SshConfigHash')) {
+            if (@($authorization).Count -eq 0) {
+                Copy-Item -LiteralPath $backup -Destination $file -Force
+                Stop-Service sshd
+                Set-Service sshd -StartupType Manual
+                Set-Property $Config 'SshSettingsRestored' $true
+            } else { Write-Warning 'OpenSSH is shared by other keys; its current service configuration was retained.' }
+        }
+        return
+    }
+    if (Property $Config 'SshStartTypeChanged' $false) {
         if (@($authorization).Count -eq 0) {
-            Copy-Item -LiteralPath $backup -Destination $file -Force
-            Stop-Service sshd
-            Set-Service sshd -StartupType Manual
-            Set-Property $Config 'SshSettingsRestored' $true
+            $priorStartType=Property $Config 'SshPreviousStartType' 'Manual'
+            if ($priorStartType -in @('Manual','Disabled')) { Stop-Service sshd }
+            Set-Service sshd -StartupType $priorStartType
+            Set-Property $Config 'SshStartTypeChanged' $false
         } else { Write-Warning 'OpenSSH is shared by other keys; its current service configuration was retained.' }
     }
 }

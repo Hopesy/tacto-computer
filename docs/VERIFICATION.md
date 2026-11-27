@@ -49,3 +49,7 @@
 2026-11-13：单入口与参考文档布局通过 Node、Windows PowerShell 5.1、WSL VPS 和发行包检查。真实隔离安装完成旧版安装、升级、回滚和再次升级，目录中 `SKILL.md` 数量依次为 2、1、2、1；CLI 调用与完整卸载通过。详细版本、场景和证据见[交付记录](histories/2026-11-13-single-skill-entry.md)。
 
 同日按用户确认统一命名：npm 包和 Skill 为 `tacto-computer`，CLI 为 `tacto-cli`，MCP 服务为 `tacto-mcp`。旧名称迁移、冲突保护、VPS 和真实 Windows 回滚通过；新包在独立 npm 缓存中成功执行 `tacto-cli --version` 和 `--help`。命名及仓库改名证据见[记录](histories/2026-11-13-single-skill-entry.md#product-naming-correction)。
+
+## 2026-11-26 全量深度审计修复验收
+
+完成状态机预检防死锁、真实桥接健康检查与 Job Object 绑定、CUA 无 `call` 简写与 `run_steps` 嵌套会话租约、截图 Base64 裁剪、预装 OpenSSH 重启自启与域账号/IPv6 支持、离线 `cleanup` 主机指纹传递、VPS 软链保留及多设备自定义名称等全量修复。跨平台单元/集成回归、双发行包完整性校验及真实 Windows 桌面隔离全生命周期验收（`tests/test-native-lifecycle.ps1`）全部通过，详见[审计修复记录](histories/2026-11-26-audit-fixes.md)。

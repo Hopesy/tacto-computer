@@ -48,13 +48,20 @@ Assert ($config.Integration.files.Count -eq 14) 'Legacy receipt did not migrate'
 $skill=Join-Path $target 'SKILL.md'
 Assert ([IO.File]::ReadAllText($skill).Contains('name: tacto-computer')) 'Skill name did not migrate'
 Assert ([IO.File]::ReadAllText($skill).Contains('--package tacto-computer@latest tacto-cli')) 'CLI prefix did not migrate'
+# Key-order changes in mcpServers must not trigger false-positive edit conflicts.
+Write-Utf8 $config.McpConfig '{"mcpServers":{"tacto-mcp":{"args":[],"command":"test"}}}'
+Assert-AgentIntegrationReady $config
 Write-Utf8 $official 'user extension'
+$preflightRefused=$false
+try { Assert-AgentIntegrationReady $config } catch { $preflightRefused=$true }
+Assert $preflightRefused 'Preflight missed edited reference'
 $before=Get-Content -LiteralPath $config.McpConfig -Raw
 $refused=$false
 try { Set-AgentIntegration $config $server } catch { $refused=$true }
 Assert $refused 'Edited reference overwritten'
 Assert ((Get-Content -LiteralPath $config.McpConfig -Raw) -eq $before) 'Conflict changed the MCP config'
 Remove-AgentIntegration $config
+Assert (-not ((Get-Content -LiteralPath $config.McpConfig -Raw | ConvertFrom-Json).mcpServers.PSObject.Properties['tacto-mcp'])) 'Key-reordered owned MCP entry was not removed'
 Assert ((Get-Content -LiteralPath $official -Raw) -eq 'user extension') 'Edited official reference lost'
 Assert (-not (Test-Path $skill)) 'Owned adapter retained'
 Assert (-not (Test-Path (Join-Path (Split-Path $official) 'RUNTIME.md'))) 'Unedited official reference retained'

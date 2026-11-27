@@ -4,7 +4,7 @@ import {hostname, homedir} from 'node:os';
 import {dirname, isAbsolute, join, resolve, posix} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {childEnvironment, windowsPowerShellEnvironment} from './process-env.mjs';
-import {connectAgent, disconnectAgent, cleanupRemote} from './integration.mjs';
+import {connectAgent, disconnectAgent, cleanupRemote, normalizeHost, validateCustomNames} from './integration.mjs';
 import {driverCommand} from './driver-cli.mjs';
 import {metadata, mcpName} from './product.mjs';
 
@@ -15,10 +15,10 @@ const help = `Tacto ${metadata.version} — Computer Use CLI + MCP
   tacto-cli setup --remote --vps-host HOST --vps-user USER [--identity-file PATH]
   tacto-cli update|rollback|check|uninstall [--install-dir PATH] [--unattended]
   tacto-cli mcp [--install-dir PATH]
-  tacto-cli driver call TOOL [JSON] [connection options] [--screenshot-out-file PATH]
+  tacto-cli driver [call] TOOL [JSON] [connection options] [--screenshot-out-file PATH]
   tacto-cli driver list-tools|describe TOOL|doctor|status|--version [connection options]
   tacto-cli mcp --proxy /absolute/path/cua-proxy [--ssh HOST] [--ssh-config PATH]
-  tacto-cli config [connection options] [--output PATH] [--force]
+  tacto-cli config [connection options] [--mcp-name NAME] [--output PATH] [--force]
   tacto-cli probe MCP_CONFIG_JSON [SERVER_NAME] [--health] [--smoke]
   tacto-cli connect [connection options] --mcp-config PATH [--skill-dir PATH | --no-skills] --device-name NAME
   tacto-cli disconnect --mcp-config PATH --device-name NAME
@@ -27,29 +27,52 @@ const help = `Tacto ${metadata.version} — Computer Use CLI + MCP
 The default command is mcp. Setup runs explicitly on the controlled Windows PC.
 Setup options: --device-name, --vps-port, --reverse-port, --local-ssh-port,
                --identity-file, --driver-path, --install-dir, --unattended,
-               --mcp-config, --skill-dir, --browser-mode isolated|existing
+               --mcp-config, --skill-dir, --mcp-name, --skill-name,
+               --browser-mode isolated|existing,
+               --permission-mode standard|bounded|unrestricted,
+               --capability-manifest PATH
 Maintenance: --auto-update on|off (update), --force (update/rollback),
              --keep-config (uninstall).
 Connection options: --install-dir, or --proxy with optional --ssh and --ssh-config.
 `;
 const flags = new Set(['local', 'remote', 'unattended', 'force', 'keep-config', 'no-skills']);
-const values = new Set(['vps-host', 'vps-user', 'vps-port', 'reverse-port', 'local-ssh-port', 'device-name', 'identity-file', 'driver-path', 'install-dir', 'proxy', 'ssh', 'ssh-config', 'output', 'mcp-config', 'skill-dir', 'browser-mode', 'auto-update', 'receipt']);
-const setupOptions = new Set(['local', 'remote', 'unattended', 'vps-host', 'vps-user', 'vps-port', 'reverse-port', 'local-ssh-port', 'device-name', 'identity-file', 'driver-path', 'install-dir', 'mcp-config', 'skill-dir', 'browser-mode', 'auto-update', 'no-skills']);
+const values = new Set(['vps-host', 'vps-user', 'vps-port', 'reverse-port', 'local-ssh-port', 'device-name', 'identity-file', 'driver-path', 'install-dir', 'proxy', 'ssh', 'ssh-config', 'output', 'mcp-config', 'skill-dir', 'mcp-name', 'skill-name', 'browser-mode', 'permission-mode', 'capability-manifest', 'auto-update', 'receipt']);
+const setupOptions = new Set(['local', 'remote', 'unattended', 'vps-host', 'vps-user', 'vps-port', 'reverse-port', 'local-ssh-port', 'device-name', 'identity-file', 'driver-path', 'install-dir', 'mcp-config', 'skill-dir', 'mcp-name', 'skill-name', 'browser-mode', 'permission-mode', 'capability-manifest', 'auto-update', 'no-skills']);
 const connectionOptions = ['install-dir', 'proxy', 'ssh', 'ssh-config'];
 
 function parse(args, allowed) {
   const options = {};
   for (let i = 0; i < args.length; i += 1) {
-    const key = args[i].startsWith('--') ? args[i].slice(2) : '';
-    if (!allowed.has(key) || Object.hasOwn(options, key)) throw new Error(`Unexpected or repeated argument: ${args[i]}`);
-    if (flags.has(key)) options[key] = true;
-    else if (values.has(key)) {
-      const value = args[++i];
-      if (!value || value.startsWith('--') || /[\r\n\0]/.test(value)) throw new Error(`Provide a value for --${key}`);
+    const raw = args[i];
+    if (!raw.startsWith('--')) throw new Error(`Unexpected or repeated argument: ${raw}`);
+    const eq = raw.indexOf('=');
+    const key = eq === -1 ? raw.slice(2) : raw.slice(2, eq);
+    if (!allowed.has(key) || Object.hasOwn(options, key)) throw new Error(`Unexpected or repeated argument: ${raw}`);
+    if (flags.has(key)) {
+      if (eq !== -1) throw new Error(`Unexpected value for --${key}`);
+      options[key] = true;
+    } else if (values.has(key)) {
+      const value = eq === -1 ? args[++i] : raw.slice(eq + 1);
+      if (!value || (eq === -1 && value.startsWith('--')) || /[\r\n\0]/.test(value)) throw new Error(`Provide a value for --${key}`);
       options[key] = value;
     }
   }
   return options;
+}
+
+function normalizeSshTarget(target) {
+  if (!target || target.startsWith('-') || /[\s\0]/.test(target)) throw new Error('Use an SSH alias or user@hostname');
+  const at = target.indexOf('@');
+  if (at !== -1) {
+    const user = target.slice(0, at);
+    const host = normalizeHost(target.slice(at + 1));
+    if (!/^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$/.test(user) || !host) throw new Error('Use an SSH alias or user@hostname');
+    return `${user}@${host}`;
+  }
+  const host = normalizeHost(target);
+  if (host) return host;
+  if (/^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/.test(target)) return target;
+  throw new Error('Use an SSH alias or user@hostname');
 }
 
 function installDirectory(options) {
@@ -79,13 +102,13 @@ async function connection(options, mode='mcp') {
   if (options.proxy) {
     if (options['install-dir']) throw new Error('Choose one connection: --install-dir or --proxy');
     if (options.ssh) {
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.@:-]*$/.test(options.ssh)) throw new Error('Use an SSH alias or user@hostname');
+      const sshTarget = normalizeSshTarget(options.ssh);
       if (!options.proxy.startsWith('/')) throw new Error('The remote proxy must be an absolute Unix path');
       const args = ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes'];
       if (options['ssh-config']) args.push('-F', await file(options['ssh-config']));
       const quote=value=>"'" + value.replaceAll("'", "'\"'\"'") + "'";
       const remote=mode==='cli' ? `exec ssh -T -F ${quote(posix.join(posix.dirname(options.proxy),'ssh_config'))} windows cua-cli` : `exec ${quote(options.proxy)}`;
-      return {command: 'ssh', args: [...args, options.ssh, remote]};
+      return {command: 'ssh', args: [...args, sshTarget, remote]};
     }
     if (options['ssh-config']) throw new Error('--ssh-config requires --ssh');
     if (!isAbsolute(options.proxy)) throw new Error('--proxy must be an absolute path');
@@ -115,6 +138,18 @@ async function connection(options, mode='mcp') {
 async function setup(command, options) {
   if (process.platform !== 'win32') throw new Error('Run desktop setup on the controlled Windows PC; use mcp --proxy on the Agent host');
   if (options.local && options.remote) throw new Error('Choose --local or --remote');
+  validateCustomNames(options);
+  if (options['vps-host']) {
+    const normalized = normalizeHost(options['vps-host']);
+    if (!normalized) throw new Error('Provide an IPv4, IPv6 or hostname for --vps-host');
+    options['vps-host'] = normalized;
+  }
+  if (options['permission-mode'] && !['standard', 'bounded', 'unrestricted'].includes(options['permission-mode'])) {
+    throw new Error('--permission-mode must be standard, bounded or unrestricted');
+  }
+  if (options['permission-mode'] === 'bounded' && !options['capability-manifest']) {
+    throw new Error('--permission-mode bounded requires --capability-manifest');
+  }
   const action = {setup: 'Install', update: 'Update', rollback: 'Rollback', check: 'Check', uninstall: 'Uninstall'}[command];
   const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(packageRoot, 'install', 'windows', 'Setup-Tacto.ps1'), '-Action', action, '-InstallDirectory', installDirectory(options)];
   if (command === 'setup') args.push('-Mode', options.local ? 'Local' : 'Remote');
@@ -122,11 +157,11 @@ async function setup(command, options) {
   if (options['keep-config']) args.push('-KeepConfig');
   if (options.force) args.push('-Force');
   if (options['no-skills']) args.push('-NoSkills');
-  const mapping = {'vps-host': 'VpsHost', 'vps-user': 'VpsUser', 'vps-port': 'VpsPort', 'reverse-port': 'ReversePort', 'local-ssh-port': 'LocalSshPort', 'device-name': 'DeviceName', 'identity-file': 'IdentityFile', 'driver-path': 'DriverPath', 'mcp-config': 'McpConfig', 'skill-dir': 'SkillDirectory', 'browser-mode': 'BrowserMode', 'auto-update': 'AutoUpdate'};
+  const mapping = {'vps-host': 'VpsHost', 'vps-user': 'VpsUser', 'vps-port': 'VpsPort', 'reverse-port': 'ReversePort', 'local-ssh-port': 'LocalSshPort', 'device-name': 'DeviceName', 'identity-file': 'IdentityFile', 'driver-path': 'DriverPath', 'mcp-config': 'McpConfig', 'skill-dir': 'SkillDirectory', 'mcp-name': 'McpName', 'skill-name': 'SkillName', 'browser-mode': 'BrowserMode', 'permission-mode': 'PermissionMode', 'capability-manifest': 'CapabilityManifest', 'auto-update': 'AutoUpdate'};
   for (const [name, parameter] of Object.entries(mapping)) {
     if (options[name] === undefined) continue;
     if (name.endsWith('port') && !/^\d+$/.test(options[name])) throw new Error(`--${name} must be an integer`);
-    const value = name === 'identity-file' || name === 'driver-path' ? await file(options[name]) : options[name];
+    const value = ['identity-file', 'driver-path', 'capability-manifest'].includes(name) ? await file(options[name]) : options[name];
     args.push(`-${parameter}`, value);
   }
   if (command === 'setup' && !options['device-name']) {
@@ -146,15 +181,19 @@ async function main() {
   if (command==='driver') return driverCommand(args,connection);
   if (command==='call') return driverCommand(['call',...args],connection);
   if (command === 'probe') {
-    if (args.length < 1 || args.length > 4) throw new Error('Usage: tacto-cli probe MCP_CONFIG_JSON [SERVER_NAME]');
-    return run(process.execPath, [join(packageRoot, 'src', 'probe.mjs'), await file(args[0]), ...args.slice(1)]);
+    const probeFlags = args.filter(arg => arg.startsWith('-'));
+    const probePositional = args.filter(arg => !arg.startsWith('-'));
+    if (probeFlags.some(arg => !['--health', '--smoke'].includes(arg)) || probePositional.length < 1 || probePositional.length > 2) {
+      throw new Error('Usage: tacto-cli probe MCP_CONFIG_JSON [SERVER_NAME] [--health] [--smoke]');
+    }
+    return run(process.execPath, [join(packageRoot, 'src', 'probe.mjs'), await file(probePositional[0]), ...probePositional.slice(1), ...probeFlags]);
   }
   if (['setup', 'update', 'rollback', 'check', 'uninstall'].includes(command)) {
-    const allowed = command === 'setup' ? setupOptions : new Set(['install-dir', 'unattended', ...(command === 'update' ? ['identity-file', 'driver-path', 'auto-update', 'mcp-config', 'skill-dir', 'browser-mode', 'no-skills', 'force'] : []), ...(command === 'uninstall' ? ['keep-config'] : []), ...(command === 'rollback' ? ['force'] : [])]);
+    const allowed = command === 'setup' ? setupOptions : new Set(['install-dir', 'unattended', ...(command === 'update' ? ['identity-file', 'driver-path', 'auto-update', 'mcp-config', 'skill-dir', 'mcp-name', 'skill-name', 'browser-mode', 'permission-mode', 'capability-manifest', 'no-skills', 'force'] : []), ...(command === 'uninstall' ? ['keep-config'] : []), ...(command === 'rollback' ? ['force'] : [])]);
     return setup(command, parse(args, allowed));
   }
   if (command === 'connect') {
-    const options = parse(args, new Set([...connectionOptions, 'mcp-config', 'skill-dir', 'device-name', 'browser-mode', 'no-skills']));
+    const options = parse(args, new Set([...connectionOptions, 'mcp-config', 'skill-dir', 'mcp-name', 'skill-name', 'device-name', 'browser-mode', 'no-skills']));
     console.log(JSON.stringify(await connectAgent(options, await connection(options), packageRoot), null, 2));
     return 0;
   }
@@ -167,10 +206,11 @@ async function main() {
     return cleanupRemote(options, packageRoot, run);
   }
   if (command === 'mcp' || command === 'config') {
-    const options = parse(args, new Set([...connectionOptions, ...(command === 'config' ? ['output', 'force'] : [])]));
+    const options = parse(args, new Set([...connectionOptions, ...(command === 'config' ? ['output', 'force', 'mcp-name'] : [])]));
+    const {name} = validateCustomNames(options);
     const server = await connection(options);
     if (command === 'mcp') return run(server.command, server.args, server.env);
-    const json = JSON.stringify({mcpServers: {[mcpName]: server}}, null, 2) + '\n';
+    const json = JSON.stringify({mcpServers: {[name]: server}}, null, 2) + '\n';
     if (options.output) {
       const output = resolve(options.output);
       await mkdir(dirname(output), {recursive: true});

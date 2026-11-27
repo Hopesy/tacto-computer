@@ -15,7 +15,11 @@ param(
     [string]$ResultFile,
     [string]$McpConfig,
     [string]$SkillDirectory,
+    [string]$McpName,
+    [string]$SkillName,
     [ValidateSet('isolated','existing')][string]$BrowserMode = 'isolated',
+    [ValidateSet('standard','bounded','unrestricted')][string]$PermissionMode,
+    [string]$CapabilityManifest,
     [switch]$NoSkills,
     [switch]$KeepConfig,
     [switch]$Force,
@@ -91,10 +95,35 @@ function Read-Setting([string]$Label, [string]$Value, [string]$Default) {
     return $Default
 }
 
+function Normalize-Host([string]$Value) {
+    if (-not $Value -or $Value -match '[\s\0]') { return '' }
+    $bare = if ($Value.StartsWith('[') -and $Value.EndsWith(']')) { $Value.Substring(1, $Value.Length - 2) } else { $Value }
+    $ip = $null
+    if ([Net.IPAddress]::TryParse($bare, [ref]$ip)) { return $bare }
+    if ($Value -match '^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$') { return $Value }
+    return ''
+}
+
+function Get-SshLoginUser {
+    $full = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    if ($full -match '^([^\\]+)\\(.+)$') {
+        if ($Matches[1] -ieq $env:COMPUTERNAME) { return $Matches[2] }
+        return ($Matches[1].ToLowerInvariant() + '\' + $Matches[2])
+    }
+    return $env:USERNAME
+}
+
 function Assert-Settings($Config) {
-    if ($Config.Mode -eq 'Remote' -and $Config.VpsHost -notmatch '^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$') { throw 'VPS 地址请填写 IPv4 或主机名。' }
+    if ($Config.Mode -eq 'Remote') {
+        $normalizedHost = Normalize-Host ([string]$Config.VpsHost)
+        if (-not $normalizedHost) { throw 'VPS 地址请填写 IPv4、IPv6 或主机名。' }
+        $Config.VpsHost = $normalizedHost
+    }
     if ($Config.Mode -eq 'Remote' -and $Config.VpsUser -notmatch '^[a-z_][a-z0-9_-]{0,31}$') { throw 'VPS 用户名格式有误。' }
     if ($Config.DeviceName -notmatch '^[a-z][a-z0-9-]{0,23}$') { throw '电脑名称请使用小写字母开头，最多 24 位字母、数字和横线。' }
+    if ((Property $Config 'McpName') -and $Config.McpName -notmatch '^[a-zA-Z][a-zA-Z0-9_-]{0,63}$') { throw 'MCP 服务名称格式有误。' }
+    if ((Property $Config 'SkillName') -and $Config.SkillName -notmatch '^[a-z][a-z0-9-]{0,63}$') { throw 'Skill 名称格式有误。' }
+    if ((Property $Config 'PermissionMode') -eq 'bounded' -and -not (Property $Config 'CapabilityManifestPath') -and -not $CapabilityManifest) { throw 'bounded 权限模式需要提供 CapabilityManifest。' }
     if ($Config.ReversePort -ne 0 -and $Config.ReversePort -lt 1024) { throw '反向端口应为 1024–65535，或 0（自动分配）。' }
     foreach ($name in @('VpsPort','LocalSshPort')) {
         if ($Config.$name -lt 1 -or $Config.$name -gt 65535) { throw "$name 应为 1–65535。" }
@@ -110,16 +139,19 @@ function Protect-Directory([string]$Path) {
 
 function Ensure-Elevation {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    if ($ExpectedUserSid -and $identity.User.Value -ne $ExpectedUserSid) { throw '请使用日常登录账户的管理员权限运行，以便接入该用户的桌面。' }
+    if ($ExpectedUserSid -and $identity.User.Value -ne $ExpectedUserSid) {
+        throw '管理员提权切换到了另一个 Windows 账户。请临时将当前桌面登录账户加入本地 Administrators 组后再执行远端安装（或改用无需提权的 --local 模式），以确保后台任务与 SSH 密钥归属当前桌面会话。'
+    }
     if ([Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { return }
     $resultPath=$ResultFile
+    $tempFolder=$null
     if (-not $resultPath) {
-        $folder=Join-Path ([IO.Path]::GetTempPath()) ('.Tacto-temp\elevation-' + [guid]::NewGuid().ToString('N'))
-        New-Item -ItemType Directory -Force $folder | Out-Null
-        $resultPath=Join-Path $folder 'result.json'
+        $tempFolder=Join-Path ([IO.Path]::GetTempPath()) ('.Tacto-temp\elevation-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force $tempFolder | Out-Null
+        $resultPath=Join-Path $tempFolder 'result.json'
     }
     $forward = @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $script:PackageDirectory 'Setup-Tacto.ps1'),'-Action',$Action,'-InstallDirectory',$InstallDirectory,'-ExpectedUserSid',$identity.User.Value,'-ResultFile',$resultPath,'-ParentConsolePid',[string]$PID)
-    foreach ($name in @('VpsHost','VpsUser','DeviceName','IdentityFile','DriverPath','McpConfig','SkillDirectory','AutoUpdate')) {
+    foreach ($name in @('VpsHost','VpsUser','DeviceName','IdentityFile','DriverPath','McpConfig','SkillDirectory','McpName','SkillName','PermissionMode','CapabilityManifest','AutoUpdate')) {
         $value = Get-Variable -Name $name -ValueOnly
         if ($value) { $forward += @('-' + $name, [string]$value) }
     }
@@ -128,10 +160,14 @@ function Ensure-Elevation {
     foreach ($flag in @('Unattended','KeepConfig','Force','NoSkills')) { if (Get-Variable -Name $flag -ValueOnly) { $forward += '-' + $flag } }
     $forward += @('-VpsPort',"$VpsPort",'-ReversePort',"$ReversePort",'-LocalSshPort',"$LocalSshPort")
     $arguments = ($forward | ForEach-Object { Quote-Argument $_ }) -join ' '
-    # Interactive SSH prompts reuse the original terminal; background helpers stay hidden.
-    $process = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
-    if (Test-Path -LiteralPath $resultPath) { Write-Host (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8) }
-    exit $process.ExitCode
+    try {
+        # Interactive SSH prompts reuse the original terminal; background helpers stay hidden.
+        $process = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+        if (Test-Path -LiteralPath $resultPath) { Write-Host (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8) }
+        exit $process.ExitCode
+    } finally {
+        if ($tempFolder -and (Test-Path -LiteralPath $tempFolder)) { Remove-Item -LiteralPath $tempFolder -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 function Get-SshExe([string]$Name) {
@@ -156,7 +192,8 @@ function Set-OwnedSshSettings($Config, [string]$ServerConfig, [bool]$Created) {
 }
 
 function Ensure-OpenSsh($Config) {
-    $wasInstalled = [bool](Get-Service sshd -ErrorAction SilentlyContinue)
+    $existingSvc = Get-Service sshd -ErrorAction SilentlyContinue
+    $wasInstalled = [bool]$existingSvc
     foreach ($name in @('OpenSSH.Client~~~~0.0.1.0','OpenSSH.Server~~~~0.0.1.0')) {
         $feature = Get-WindowsCapability -Online -Name $name
         if ($feature.State -ne 'Installed') {
@@ -173,12 +210,32 @@ function Ensure-OpenSsh($Config) {
     $ownedSettings=Set-OwnedSshSettings $Config $serverConfig (-not $wasInstalled)
     Invoke-Native (Get-SshExe 'ssh-keygen.exe') @('-A')
     Invoke-Native $sshd @('-t','-f',$serverConfig)
-    if ($ownedSettings) { Set-Service sshd -StartupType Automatic }
+    $svc = Get-Service sshd -ErrorAction Stop
+    if ($ownedSettings -or $svc.StartType -ne 'Automatic') {
+        if (-not $ownedSettings -and -not (Property $Config 'SshPreviousStartType')) {
+            Set-Property $Config 'SshPreviousStartType' ([string]$svc.StartType)
+        }
+        Set-Service sshd -StartupType Automatic
+        if (-not $ownedSettings) { Set-Property $Config 'SshStartTypeChanged' $true }
+    }
     Start-Service sshd
-    $settings = & $sshd -T -f $serverConfig -C "user=$env:USERNAME,host=localhost,addr=127.0.0.1"
-    if ($LASTEXITCODE -ne 0) { throw '读取 OpenSSH 实际配置失败。' }
-    $keySetting = @($settings | Where-Object { $_ -match '^authorizedkeysfile ' })[0] -replace '^authorizedkeysfile\s+',''
-    $keySetting = $keySetting.Split(' ')[0]
+    $keySetting = ''
+    if ($env:USERNAME -notmatch '\s') {
+        $settings = & $sshd -T -f $serverConfig -C "user=$env:USERNAME,host=localhost,addr=127.0.0.1" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $matched = @($settings | Where-Object { $_ -match '^authorizedkeysfile ' })
+            if ($matched.Count) { $keySetting = ($matched[0] -replace '^authorizedkeysfile\s+','').Split(' ')[0] }
+        }
+    }
+    if (-not $keySetting) {
+        $isAdmin = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        $rawCfg = Get-Content -LiteralPath $serverConfig -Raw -Encoding UTF8
+        if ($isAdmin -and $rawCfg -match '(?im)^\s*AuthorizedKeysFile\s+__PROGRAMDATA__/ssh/administrators_authorized_keys') {
+            $keySetting = '__PROGRAMDATA__/ssh/administrators_authorized_keys'
+        } else {
+            $keySetting = '.ssh/authorized_keys'
+        }
+    }
     $keySetting = $keySetting.Replace('__PROGRAMDATA__',$env:ProgramData).Replace('%h',$env:USERPROFILE).Replace('%u',$env:USERNAME)
     if (-not [IO.Path]::IsPathRooted($keySetting)) { $keySetting = Join-Path $env:USERPROFILE $keySetting }
     $Config.AuthorizedKeysFile = [IO.Path]::GetFullPath($keySetting)
@@ -231,7 +288,7 @@ function Invoke-Vps($Config, [string]$RemoteAction, [switch]$Bootstrap, [switch]
     }
     if ($RemoteAction -eq 'remove') { $request.purge = $true }
     if ($Bootstrap) {
-        $request.windowsUser = $env:USERNAME
+        $request.windowsUser = Get-SshLoginUser
         $request.windowsHostKey = $Config.WindowsHostKey
         $request.tunnelPublicKey = (Get-Content -LiteralPath ($Config.TunnelKey + '.pub') -Raw).Trim()
         $request.driverPath = $Config.DriverPath
@@ -298,12 +355,18 @@ function Set-WindowsAuthorization($Config, [string]$PublicKey, [switch]$Remove) 
 function Save-Config($Config) { Write-AtomicJson $script:ConfigPath $Config }
 
 function Install-Tasks($Config) {
-    $launcher = Join-Path $InstallDirectory 'BackgroundLauncher.exe'
     $launcher = Join-Path $Config.RuntimePath 'install\windows\BackgroundLauncher.exe'
     $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $account
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $cuaArgs = @($Config.DriverPath,'serve','--socket',$Config.SocketPath,'--pid-file',(Join-Path $InstallDirectory 'cua.pid'))
+    $permMode = Property $Config 'PermissionMode'
+    if ($permMode) {
+        $cuaArgs += @('--permission-mode',[string]$permMode)
+        if ($permMode -eq 'unrestricted') { $cuaArgs += '--dangerously-bypass-approvals' }
+    }
+    $capManifest = Property $Config 'CapabilityManifestPath'
+    if ($capManifest) { $cuaArgs += @('--capability-manifest',[string]$capManifest,'--approve-capability-manifest') }
     $tunnelArgs = @("$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe",'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $Config.RuntimePath 'install\windows\Start-Tunnel.ps1'),'-VpsHost',$Config.VpsHost,'-VpsUser',$Config.VpsUser,'-VpsPort',"$($Config.VpsPort)",'-ReversePort',"$($Config.ReversePort)",'-LocalSshPort',"$($Config.LocalSshPort)",'-IdentityFile',$Config.TunnelKey,'-KnownHostsFile',$Config.KnownHostsFile,'-InstanceName',$Config.TunnelTask,'-LogDirectory',(Join-Path $InstallDirectory 'logs'))
     $taskSpecs = @(@{ Name=$Config.CuaTask; Args=$cuaArgs; Level='Limited' })
     if ($Config.Mode -eq 'Remote') { $taskSpecs += @{ Name=$Config.TunnelTask; Args=$tunnelArgs; Level='Limited' } }
@@ -368,11 +431,14 @@ try {
     if ($ParentConsolePid -and -not $Unattended) {
         Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class TactoConsole { [DllImport("kernel32.dll")] public static extern bool FreeConsole(); [DllImport("kernel32.dll")] public static extern bool AttachConsole(uint pid); }'
         [TactoConsole]::FreeConsole() | Out-Null
-        if (-not [TactoConsole]::AttachConsole([uint32]$ParentConsolePid)) { throw 'Run remote setup from your terminal, or use --unattended with a trusted host and SSH key.' }
+        if (-not [TactoConsole]::AttachConsole([uint32]$ParentConsolePid)) {
+            if ($VpsHost -and $VpsUser -and $IdentityFile) { $Unattended = $true }
+            else { throw 'Run remote setup from your terminal, or use --unattended with a trusted host and SSH key.' }
+        }
     }
     Assert-InstallRoot
     $existing = if (Test-Path -LiteralPath $script:ConfigPath) { Get-Config } else { $null }
-    if ($Action -eq 'Install' -and -not $existing -and $Mode -eq 'Remote') {
+    if ($Action -eq 'Install' -and (-not $existing -or $existing.Phase -notin @('complete','uninstalled')) -and $Mode -eq 'Remote') {
         $VpsHost=Read-Setting 'VPS host' $VpsHost ''
         $VpsUser=Read-Setting 'VPS user' $VpsUser ''
         if (-not $DeviceName) { $DeviceName=(New-DesktopConfig).DeviceName }
@@ -381,7 +447,14 @@ try {
     if ($Action -ne 'Check') { $lock = Enter-LifecycleLock }
     if (Test-Path -LiteralPath (Join-Path $InstallDirectory 'transaction.json')) {
         if ($Action -eq 'Check') { throw 'An interrupted update needs recovery. Run update or uninstall.' }
-        Restore-Transaction
+        if ($Action -eq 'Uninstall') {
+            try {
+                $aborted = Get-Content -LiteralPath (Join-Path $InstallDirectory 'transaction.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                if (Property $aborted 'candidate') { Stop-OwnedTasks $aborted.candidate; Remove-AgentIntegration $aborted.candidate }
+            } catch { }
+        } else {
+            Restore-Transaction
+        }
     }
     switch ($Action) {
         'Install' { Install-Desktop }

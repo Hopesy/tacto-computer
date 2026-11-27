@@ -34,7 +34,7 @@ function Receive-VerifiedArchive([string]$Uri, [string]$Path, [string]$Sha256) {
             return
         } catch {
             if ($attempt -eq 3) { throw }
-            Start-Sleep -Seconds $attempt
+            Start-Sleep -Seconds ($attempt * 2)
         }
     }
 }

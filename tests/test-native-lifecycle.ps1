@@ -42,14 +42,24 @@ try {
     $startJson | & node $cli driver --install-dir $install call end_session *> (Join-Path $root 'cli-end.json')
     Assert ($LASTEXITCODE -eq 0) 'CLI end_session failed'
     Assert (@(Get-ChildItem (Join-Path $install 'cli-sessions') -Filter '*.json').Count -eq 0) 'CLI idle lease remains'
-    & node $cli driver --install-dir $install call get_screen_size '{}' *> (Join-Path $root 'cli-screen-size.json')
-    Assert ($LASTEXITCODE -eq 0) 'CLI read-only screen-size call failed'
+    & node $cli driver --install-dir $install get_screen_size '{}' *> (Join-Path $root 'cli-screen-size.json')
+    Assert ($LASTEXITCODE -eq 0) 'CLI shorthand read-only screen-size call failed'
     $official=Join-Path $skills 'tacto-computer\references\BROWSER.md'
+    $originalBrowser=[IO.File]::ReadAllText($official,[Text.Encoding]::UTF8)
     Assert ((Get-FileHash $official).Hash -eq (Get-FileHash (Join-Path $repo 'resources\cua-skill\BROWSER.md')).Hash) 'Official Skill content changed'
     Assert (@(Get-ChildItem -LiteralPath (Join-Path $skills 'tacto-computer') -Filter SKILL.md -Recurse).Count -eq 1) 'Expected one discoverable device Skill'
+    # Verify edited Skill preflight rejects update cleanly without leaving transaction.json or stopping the daemon.
+    [IO.File]::WriteAllText($official,'user edited note',[Text.Encoding]::UTF8)
+    Step 'edited-skill-preflight' @('-Action','Update') -FailureExpected
+    Assert (-not (Test-Path -LiteralPath (Join-Path $install 'transaction.json'))) 'Edited Skill preflight left a transaction journal'
+    Step 'healthy-after-preflight-refusal' @('-Action','Check')
+    [IO.File]::WriteAllText($official,$originalBrowser,[Text.UTF8Encoding]::new($false))
     Step 'upgrade' @('-Action','Update')
+    $firstUpgrade=Config
+    Step 'upgrade-third' @('-Action','Update')
+    Assert (@(Get-ChildItem -LiteralPath (Join-Path $install 'releases') -Directory).Count -eq 2 -and -not (Test-Path -LiteralPath $first.RuntimePath)) 'Superseded runtime directories were not pruned'
     $second=Config
-    Assert ($first.RuntimePath -ne $second.RuntimePath) 'Upgrade did not stage an independent runtime'
+    Assert ($firstUpgrade.RuntimePath -ne $second.RuntimePath) 'Upgrade did not stage an independent runtime'
     Assert ($first.ClientId -eq $second.ClientId -and $first.SocketPath -eq $second.SocketPath) 'Upgrade changed identity'
     $broken=Join-Path $root 'broken-driver.exe'
     $source=Join-Path $root 'broken.cs'
@@ -60,10 +70,10 @@ try {
     $restored=Config
     Assert ($restored.RuntimePath -eq $second.RuntimePath -and $restored.DriverPath -eq $second.DriverPath -and $restored.Phase -eq 'complete') 'Automatic rollback failed'
     Step 'health-after-recovery' @('-Action','Check')
-    & node (Join-Path $repo 'bin\tacto.mjs') probe (Join-Path $install 'mcp-local.json') --health --smoke *> (Join-Path $root 'probe.json')
+    & node (Join-Path $repo 'bin\tacto.mjs') probe --health --smoke (Join-Path $install 'mcp-local.json') *> (Join-Path $root 'probe.json')
     Assert ($LASTEXITCODE -eq 0) 'Actual MCP endpoint failed health/screen-size check'
     Step 'manual-rollback' @('-Action','Rollback')
-    Assert ((Config).RuntimePath -eq $first.RuntimePath) 'Manual rollback chose the wrong runtime'
+    Assert ((Config).RuntimePath -eq $firstUpgrade.RuntimePath) 'Manual rollback chose the wrong runtime'
     Stop-ScheduledTask -TaskName $first.CuaTask
     Start-Sleep -Seconds 2
     Start-ScheduledTask -TaskName $first.CuaTask

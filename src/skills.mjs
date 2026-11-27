@@ -15,6 +15,7 @@ export async function detectSkillDirectories(home=homedir(), env=process.env) {
     [join(home,'.openclaw'), join(home,'.openclaw','skills')],
     [join(home,'.config','opencode'), join(home,'.config','opencode','skills')],
   ];
+  if (env.APPDATA) candidates.push([join(env.APPDATA,'opencode'), join(env.APPDATA,'opencode','skills')]);
   const found=[];
   for (const [marker,directory] of candidates) {
     try { if ((await stat(marker)).isDirectory()) found.push(resolve(directory)); }
@@ -28,9 +29,11 @@ export function cliPrefix(options, platform=process.platform) {
   for (const key of ['install-dir','proxy','ssh','ssh-config']) if (options[key]) args.push(`--${key}`,quote(options[key]));
   return `${platform==='win32'?'npx.cmd':'npx'} -y --package ${metadata.name}@latest ${cliName} driver${args.length?' '+args.join(' '):''}`;
 }
-export async function skillFiles(packageRoot, device, browser, prefix) {
+export async function skillFiles(packageRoot, device, browser, prefix, names={}) {
+  const targetSkill=names.skillName ?? skillName;
+  const targetServer=names.mcpName ?? mcpName;
   const template=await readFile(join(packageRoot,'resources','tacto-skill.md'),'utf8');
-  const files={'SKILL.md':template.replaceAll('{{SKILL}}',skillName).replaceAll('{{DEVICE}}',device).replaceAll('{{SERVER}}',mcpName).replaceAll('{{BROWSER}}',browser).replaceAll('{{CLI}}',prefix)};
+  const files={'SKILL.md':template.replaceAll('{{SKILL}}',targetSkill).replaceAll('{{DEVICE}}',device).replaceAll('{{SERVER}}',targetServer).replaceAll('{{BROWSER}}',browser).replaceAll('{{CLI}}',prefix)};
   const references=JSON.parse(await readFile(join(packageRoot,'install','skill-references.json'),'utf8'));
   return {...files,...references};
 }

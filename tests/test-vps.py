@@ -158,7 +158,9 @@ for line in sys.stdin:
  m=json.loads(line)
  if 'id' not in m: continue
  if m['method']=='initialize': result={'protocolVersion':'2025-06-18'}
- elif m['method']=='tools/list': result={'tools':[{'name':'health_report'}]}
+ elif m['method']=='tools/list':
+  if m.get('params',{}).get('cursor')=='page2': result={'tools':[{'name':'health_report'}]}
+  else: result={'tools':[{'name':'first_tool'}],'nextCursor':'page2'}
  else:
   result={'structuredContent':{'schema_version':'1','platform':'win32','overall':sys.argv[1],'checks':[{'name':name,'status':'pass'} for name in ['binary_version','platform_supported','session_active']]}}
  print(json.dumps({'jsonrpc':'2.0','method':'notifications/message','params':{}})+'\\n'+json.dumps({'jsonrpc':'2.0','id':m['id'],'result':result}),flush=True)
@@ -167,6 +169,58 @@ for line in sys.stdin:
             self.assertEqual(setup.mcp_health([sys.executable,str(fake),status])['overall'],status)
         with self.assertRaisesRegex(RuntimeError,'health failed'):
             setup.mcp_health([sys.executable,str(fake),'failed'])
+
+    def test_authorized_keys_symlink_corrupt_sibling_and_custom_names(self):
+        real_auth = self.home/'dotfiles_authorized_keys'
+        real_auth.write_text(self.pub.strip()+' retained-key\n')
+        self.auth.unlink()
+        self.auth.symlink_to(real_auth)
+        broken_dir = self.home/'.tacto/devices/corrupted'
+        broken_dir.mkdir(parents=True)
+        (broken_dir/'state.json').write_text('{corrupted-json')
+        custom_req = dict(self.request, mcpName='tacto-office', skillName='tacto-office', windowsUser=r'azuread\Test User')
+        state = setup.execute(custom_req, self.home)
+        self.assertTrue(self.auth.is_symlink())
+        self.assertIn('tacto:test-laptop:tunnel', real_auth.read_text())
+        self.assertEqual(state['mcpName'], 'tacto-office')
+        self.assertEqual(state['skillName'], 'tacto-office')
+        folder = self.home/'.tacto/devices/test-laptop'
+        ssh_cfg = subprocess.check_output(['ssh','-G','-F',str(folder/'ssh_config'),'windows'],text=True)
+        self.assertIn('azuread\\test user', ssh_cfg.lower())
+        cfg = self.home/'multi-agent.json'
+        custom_skill = self.home/'skills/tacto-office/SKILL.md'
+        custom_skill.parent.mkdir(parents=True)
+        initial_skill = '---\nname: tacto-office\n---\nold custom skill'
+        custom_skill.write_text(initial_skill)
+        cfg.write_text(json.dumps({'mcpServers': {'tacto-office': state['mcp']}}))
+        receipt = Path(str(cfg) + '.tacto-test-laptop.json')
+        receipt.write_text(json.dumps(dict(
+            schema=2, config=str(cfg), device='test-laptop', name='tacto-office',
+            skillName='tacto-office', customNames=True, server=state['mcp'],
+            skill=str(custom_skill), skillHash=hashlib.sha256(initial_skill.encode()).hexdigest(),
+            files=[dict(root=str(custom_skill.parent), path=str(custom_skill), hash=hashlib.sha256(initial_skill.encode()).hexdigest())]
+        )))
+        (folder/'agent-integrations.json').write_text(json.dumps([dict(clientId='id-1', receipt=str(receipt))]))
+        default_update = dict(
+            action='configure', device='test-laptop', clientId='id-1',
+            mcpName='tacto-mcp', skillName='tacto-computer',
+            skillFiles={'SKILL.md': '---\nname: tacto-computer\ndescription: Operate via the tacto-mcp MCP server.\n---\nUse server `tacto-mcp` or {{VPS_CLI}}'}
+        )
+        reconciled = setup.execute(default_update, self.home)
+        self.assertEqual(reconciled['preservedIntegrations'], [])
+        self.assertEqual(set(json.loads(cfg.read_text())['mcpServers']), {'tacto-office'})
+        self.assertTrue(custom_skill.exists())
+        self.assertFalse((self.home/'skills/tacto-computer').exists())
+        updated_text = custom_skill.read_text()
+        self.assertIn('name: tacto-office', updated_text)
+        self.assertIn('the tacto-office MCP server', updated_text)
+        self.assertIn('server `tacto-office`', updated_text)
+        setup.execute(dict(action='remove',device='test-laptop',clientId='id-1'), self.home)
+        self.assertFalse(custom_skill.exists())
+        self.assertFalse(receipt.exists())
+        self.assertEqual(json.loads(cfg.read_text()), {'mcpServers': {}})
+        self.assertTrue(self.auth.is_symlink())
+        self.assertNotIn('tacto:test-laptop:tunnel', real_auth.read_text())
 
     def test_occupied_port_and_invalid_input(self):
         with socket.socket() as sock:

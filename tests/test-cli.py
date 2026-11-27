@@ -34,12 +34,18 @@ class CliTest(unittest.TestCase):
         self.assertEqual(server['command'],'ssh')
         self.assertEqual(shlex.split(server['args'][-1]),['exec',proxy])
         output=self.folder/'export.json'
-        args=('config','--ssh','my-vps','--proxy',proxy,'--output',str(output))
+        args=('config','--ssh=agent@[2001:db8::1]','--proxy='+proxy,'--mcp-name=tacto-office','--output='+str(output))
         self.assertEqual(self.invoke(*args).returncode,0)
+        exported=json.loads(output.read_text(encoding='utf-8'))
+        self.assertIn('tacto-office',exported['mcpServers'])
+        self.assertEqual(exported['mcpServers']['tacto-office']['args'][-2],'agent@2001:db8::1')
         original=output.read_bytes()
         self.assertNotEqual(self.invoke(*args).returncode,0)
         self.assertEqual(output.read_bytes(),original)
         self.assertEqual(self.invoke(*args,'--force').returncode,0)
+        missing_probe=self.invoke('probe','--health','--smoke',str(self.folder/'missing.json'))
+        self.assertNotEqual(missing_probe.returncode,0)
+        self.assertIn('missing.json',missing_probe.stderr)
     @unittest.skipUnless(os.name=='nt','Windows installation configuration')
     def test_local_config(self):
         driver=self.folder/'cua driver.exe'

@@ -88,6 +88,18 @@ Assert ($script:tasks.ContainsKey('Tacto-Update-' + $first.ClientId)) 'Opt-in up
 $AutoUpdate='off'
 Install-Desktop
 Assert (-not $script:tasks.ContainsKey('Tacto-Update-' + $first.ClientId)) 'Disabled updater task remains'
+$capFile=Join-Path $fixture 'capability-manifest.json'
+Write-Utf8 $capFile '{"version":1}'
+$PermissionMode='unrestricted'
+$CapabilityManifest=$capFile
+Install-Desktop
+$cuaTaskArg=$script:tasks[$first.CuaTask].Action.Argument
+Assert ($cuaTaskArg.Contains('--permission-mode') -and $cuaTaskArg.Contains('unrestricted') -and $cuaTaskArg.Contains('--dangerously-bypass-approvals')) 'Daemon task missing unrestricted permission flags'
+Assert ($cuaTaskArg.Contains('--capability-manifest') -and $cuaTaskArg.Contains('--approve-capability-manifest')) 'Daemon task missing capability manifest flags'
+Remove-Variable PermissionMode -ErrorAction SilentlyContinue
+[string]$PermissionMode=''
+$CapabilityManifest=''
+Assert (@(Get-ChildItem (Join-Path $fixture 'releases') -Directory).Count -le 2) 'Superseded runtime directories were not pruned'
 $beforeFailure=Get-Config
 $script:healthyRuntime=$beforeFailure.RuntimePath
 $script:healthFails=$true
@@ -131,11 +143,26 @@ Install-Desktop
 if ($TestMode -eq 'Remote') {
     Assert (@((Get-Content (Get-Config).AuthorizedKeysFile) | Where-Object { $_.EndsWith(':' + $first.ClientId) }).Count -eq 1) 'Reinstall did not restore callback authorization'
 }
+if ($TestMode -eq 'Remote') {
+    Write-Utf8 (Get-Config).KnownHostsFile "example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixtureHost`r`n"
+}
 $script:offline=($TestMode -eq 'Remote')
 Uninstall-Desktop
 Assert ($script:tasks.Count -eq 0) 'Tasks remain after uninstall'
 if ($TestMode -eq 'Remote') { Assert ((Get-Content $first.AuthorizedKeysFile -Raw).Trim() -eq "ssh-ed25519 AAAA retained`r`nssh-ed25519 AQID tacto:lifecycle-pc:another-install") 'Uninstall changed other authorization' }
 Assert (-not (Test-Path $script:ConfigPath)) 'Full uninstall left installation config'
 Assert (-not (Test-Path (Join-Path $fixture 'keys'))) 'Full uninstall left private keys'
-if ($TestMode -eq 'Remote') { Assert ($null -ne $script:PendingRemote) 'Offline uninstall lost cleanup receipt' }
+if ($TestMode -eq 'Remote') {
+    Assert ($null -ne $script:PendingRemote) 'Offline uninstall lost cleanup receipt'
+    $receiptObj = Get-Content -LiteralPath $script:PendingRemote -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert (@($receiptObj.knownHosts).Count -eq 1 -and $receiptObj.knownHosts[0] -like 'example.test*') 'Offline receipt omitted pinned VPS host key'
+}
+# Verify incomplete initial setup allows parameter correction on retry.
+$script:offline=$false
+New-Item -ItemType Directory -Force $fixture | Out-Null
+Write-AtomicJson $script:ConfigPath @{Mode=$TestMode;VpsHost='wrong.example';VpsUser='wrong';VpsPort=22;DeviceName='wrong-pc';ReversePort=0;LocalSshPort=22;SocketPath='\\.\pipe\tacto-wrong';ClientId=[guid]::NewGuid().ToString();DriverPath='';DriverOwned=$true;AuthorizedKeysFile='';WindowsHostKey='';TunnelKey=(Join-Path $fixture 'keys\tunnel');KnownHostsFile=(Join-Path $fixture 'keys\known_hosts');CuaTask='Tacto-CUA-wrong';TunnelTask='Tacto-Tunnel-wrong';Remote=$null;Phase='preparing';UserSid='S-1-5-21-0'}
+$Action='Install'
+Install-Desktop
+Assert ((Get-Config).DeviceName -eq 'lifecycle-pc' -and (Get-Config).Phase -eq 'complete') 'Incomplete setup blocked parameter correction'
+Uninstall-Desktop
 Write-Host ('PASS: ' + $TestMode + ' install/update/check/uninstall; actual launcher compiler; isolated OS/tasks/VPS.')

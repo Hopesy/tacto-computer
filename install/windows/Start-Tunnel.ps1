@@ -29,7 +29,9 @@ try {
     if (-not $acquired) { exit 0 }
     if (-not (Test-Path -LiteralPath $IdentityFile)) { throw "Missing SSH key: $IdentityFile" }
     New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null
-    $sshExe = (Get-Command ssh.exe -ErrorAction Stop).Source
+    $systemSsh = Join-Path "$env:WINDIR\System32\OpenSSH" 'ssh.exe'
+    $sshExe = if (Test-Path -LiteralPath $systemSsh) { $systemSsh } else { (Get-Command ssh.exe -ErrorAction Stop).Source }
+    $normalizedHost = if ($VpsHost.StartsWith('[') -and $VpsHost.EndsWith(']')) { $VpsHost.Substring(1, $VpsHost.Length - 2) } else { $VpsHost }
     $retrySeconds = 10
     while ($true) {
         $sshArguments = @('-NT', '-p', "$VpsPort", '-i', $IdentityFile,
@@ -38,7 +40,7 @@ try {
             '-o', 'ServerAliveInterval=20', '-o', 'ServerAliveCountMax=3',
             '-R', "127.0.0.1:${ReversePort}:127.0.0.1:${LocalSshPort}")
         if ($KnownHostsFile) { $sshArguments += @('-o', "UserKnownHostsFile=$KnownHostsFile") }
-        $sshArguments += "${VpsUser}@${VpsHost}"
+        $sshArguments += "${VpsUser}@${normalizedHost}"
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
         $startInfo.FileName = $sshExe
         $startInfo.Arguments = ($sshArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join ' '
@@ -53,13 +55,33 @@ try {
         try {
             $connection.Start() | Out-Null
             $launched = $true
-            $stdout = $connection.StandardOutput.ReadToEndAsync()
-            $stderr = $connection.StandardError.ReadToEndAsync()
-            Write-TunnelLog "SSH started; PID=$($connection.Id); destination=${VpsUser}@${VpsHost}:${VpsPort}; reverse=127.0.0.1:${ReversePort}"
-            while (-not $connection.WaitForExit(1000)) { }
-            $detail = ($stderr.Result + $stdout.Result).Trim()
-            if ($detail.Length -gt 4096) { $detail = $detail.Substring($detail.Length - 4096) }
-            Write-TunnelLog "SSH exited; code=$($connection.ExitCode); $detail"
+            $outTask = $connection.StandardOutput.ReadLineAsync()
+            $errTask = $connection.StandardError.ReadLineAsync()
+            Write-TunnelLog "SSH started; PID=$($connection.Id); destination=${VpsUser}@${normalizedHost}:${VpsPort}; reverse=127.0.0.1:${ReversePort}"
+            while (-not $connection.WaitForExit(250)) {
+                while ($outTask -and $outTask.IsCompleted) {
+                    if (-not $outTask.IsFaulted -and -not $outTask.IsCanceled -and $null -ne $outTask.Result) {
+                        if ($outTask.Result.Trim()) { Write-TunnelLog ('SSH: ' + $outTask.Result.Trim()) }
+                        $outTask = $connection.StandardOutput.ReadLineAsync()
+                    } else { $outTask = $null }
+                }
+                while ($errTask -and $errTask.IsCompleted) {
+                    if (-not $errTask.IsFaulted -and -not $errTask.IsCanceled -and $null -ne $errTask.Result) {
+                        if ($errTask.Result.Trim()) { Write-TunnelLog ('SSH: ' + $errTask.Result.Trim()) }
+                        $errTask = $connection.StandardError.ReadLineAsync()
+                    } else { $errTask = $null }
+                }
+            }
+            foreach ($pair in @(@('out',$outTask,$connection.StandardOutput),@('err',$errTask,$connection.StandardError))) {
+                $task = $pair[1]; $stream = $pair[2]
+                while ($task) {
+                    if (-not $task.Wait(500)) { break }
+                    if ($null -eq $task.Result) { break }
+                    if ($task.Result.Trim()) { Write-TunnelLog ('SSH: ' + $task.Result.Trim()) }
+                    $task = $stream.ReadLineAsync()
+                }
+            }
+            Write-TunnelLog "SSH exited; code=$($connection.ExitCode)"
         } catch {
             Write-TunnelLog "SSH error: $($_.Exception.Message)"
         } finally {

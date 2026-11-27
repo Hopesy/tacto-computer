@@ -22,6 +22,10 @@ Restore-OpenSshSettings $config
 Write-Utf8 $configFile '# user changed settings'
 Assert (-not (Set-OwnedSshSettings $config $configFile $false)) 'Reinstall overwrote edited SSH settings'
 Assert ((Get-Content $configFile -Raw) -eq '# user changed settings') 'Edited SSH settings changed'
+$preinstalled=[pscustomobject]@{AuthorizedKeysFile=(Join-Path $fixture 'empty_authorized_keys');SshStartTypeChanged=$true;SshPreviousStartType='Manual'}
+$script:stopped=$false; $script:startup=''
+Restore-OpenSshSettings $preinstalled
+Assert ($script:stopped -and $script:startup -eq 'Manual' -and -not $preinstalled.SshStartTypeChanged) 'Pre-installed sshd start type was not restored'
 $health=[pscustomobject]@{schema_version=1;platform='win32';overall='degraded';checks=@('binary_version','platform_supported','session_active') | ForEach-Object { [pscustomobject]@{name=$_;status='pass';message='ready'} }}
 Assert-Health $health
 $health.checks[2].status='fail'

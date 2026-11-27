@@ -58,5 +58,22 @@ class ProbeTest(unittest.TestCase):
                 result=self.invoke(mode)
                 self.assertNotEqual(result.returncode,0)
                 self.assertIn(text,result.stderr)
+    @unittest.skipUnless(os.name=='nt','Windows PowerShell environment sanitization')
+    def test_probe_sanitizes_powershell_module_path_without_server_env(self):
+        with tempfile.TemporaryDirectory(prefix='probe-ps-',dir=root) as folder:
+            script=Path(folder)/'mcp.ps1'
+            script.write_text('''$cmd=Get-Command Get-FileHash -ErrorAction Stop
+$line=[Console]::In.ReadLine() | ConvertFrom-Json
+[Console]::Out.WriteLine((@{jsonrpc='2.0';id=$line.id;result=@{protocolVersion='2025-06-18';serverInfo=@{name='ps';version='1'};capabilities=@{tools=@{}}}} | ConvertTo-Json -Depth 6 -Compress))
+$null=[Console]::In.ReadLine()
+$line=[Console]::In.ReadLine() | ConvertFrom-Json
+[Console]::Out.WriteLine((@{jsonrpc='2.0';id=$line.id;result=@{tools=@(@{name=$cmd.Name;inputSchema=@{type='object'}})}} | ConvertTo-Json -Depth 6 -Compress))
+''',encoding='utf-8-sig')
+            config=Path(folder)/'mcp.json'
+            winps=str(Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
+            config.write_text(json.dumps({'mcpServers':{'fixture':{'command':winps,'args':['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(script)]}}}))
+            result=subprocess.run(['node',str(probe),str(config)],capture_output=True,text=True,timeout=25,env={**os.environ,'PSModulePath':str(Path(folder)/'polluted-modules')})
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(json.loads(result.stdout)['tools'],['Get-FileHash'])
 
 if __name__ == '__main__': unittest.main(verbosity=2)
